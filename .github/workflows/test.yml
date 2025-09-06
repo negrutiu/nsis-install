@@ -25,11 +25,20 @@ jobs:
 
       - name: Install NSIS
         id: install
+        if: runner.os == 'Windows'
         uses: ./    # use ./action.yml
         with:
           arch: ${{matrix.arch}}
 
+      - name: Install NSIS (non-Windows)
+        if: runner.os != 'Windows'
+        uses: ./
+        continue-on-error: true # expect failure
+        with:
+          arch: ${{matrix.arch}}
+
       - name: Install outputs
+        if: runner.os == 'Windows'
         env:
           NSIS_INSTDIR: ${{steps.install.outputs.instdir}}
           NSIS_VERSION: ${{steps.install.outputs.version}}
