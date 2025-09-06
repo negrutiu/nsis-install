@@ -16,6 +16,10 @@ outputs:
     description: The installed version of NSIS (e.g. "1.2.3.4")
     value: ${{steps.install.outputs.version}}
 
+branding:
+  icon: package   # https://feathericons.com
+  color: orange
+  
 runs:
   using: "composite"
   steps:
