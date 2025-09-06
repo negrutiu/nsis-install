@@ -35,7 +35,7 @@ runs:
                 if re.match(value, '${{inputs.arch}}', re.IGNORECASE):
                     arch = name
         if not arch:
-            raise ValueError(f'unsupported architecture { '${{inputs.arch}}' }')
+            raise ValueError(f'unsupported architecture { "${{inputs.arch}}" }')
 
         # inputs
         print(f'-- inputs.arch = {arch}')
