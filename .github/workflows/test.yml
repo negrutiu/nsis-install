@@ -24,6 +24,17 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Install NSIS
+        id: install
         uses: ./    # use ./action.yml
         with:
           arch: ${{matrix.arch}}
+
+      - name: Install outputs
+        env:
+          NSIS_INSTDIR: ${{steps.install.outputs.instdir}}
+          NSIS_VERSION: ${{steps.install.outputs.version}}
+        shell: python
+        run: |
+          import os
+          print(f'-- NSIS_INSTDIR = {os.getenv("NSIS_INSTDIR")}')
+          print(f'-- NSIS_VERSION = {os.getenv("NSIS_VERSION")}')
