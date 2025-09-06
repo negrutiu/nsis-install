@@ -5,7 +5,7 @@ inputs:
   arch:
     description: NSIS compiler architecture [x86|Win32|i*86, amd64|x86_64|x64]
     required: false
-    default: x86  # note: both x86 and amd64 compilers can generate both x86 and amd64 installers
+    default: x86  # both x86 and amd64 compilers can generate both x86 and amd64 installers
 
 outputs:
   instdir:
@@ -19,7 +19,14 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - id: install
+    - name: Validate Windows OS
+      if: runner.os != 'Windows'
+      shell: python
+      run: |
+        raise RuntimeError("This action only supports Windows runners.")
+
+    - name: Install NSIS
+      id: install
       shell: python
       run: |
         import re, os, sys
