@@ -1,0 +1,48 @@
+name: Install NSIS
+description: A GitHub Action to install negrutiu/nsis on Windows runners.
+
+inputs:
+  arch:
+    description: NSIS compiler architecture [x86|Win32|i*86, amd64|x86_64|x64]
+    required: false
+    default: x86  # note: both x86 and amd64 compilers can generate both x86 and amd64 installers
+
+outputs:
+  instdir:
+    description: The installation directory of NSIS
+    value: ${{steps.install.outputs.instdir}}
+    
+  version:
+    description: The installed version of NSIS (e.g. "1.2.3.4")
+    value: ${{steps.install.outputs.version}}
+
+runs:
+  using: "composite"
+  steps:
+    - id: install
+      shell: python
+      run: |
+        import re, os, sys
+
+        print(f'-- os.name = {os.name}')
+        print(f'-- sys.platform = {sys.platform}')
+
+        # architecture
+        arch = None
+        arch_matrix = {'x86': ['x86', 'win32', 'i[3-6]86'], 'amd64': ['amd64', 'x86_64', 'x64']}
+        for name, values in arch_matrix.items():
+            for value in values:
+                if re.match(value, '${{inputs.arch}}', re.IGNORECASE):
+                    arch = name
+        if not arch:
+            raise ValueError(f'unsupported architecture { '${{inputs.arch}}' }')
+
+        # inputs
+        print(f'-- inputs.arch = {arch}')
+
+        # outputs
+        with open(os.getenv('GITHUB_OUTPUT'), "a") as fo:
+          print(f"-- outputs.instdir = todo: NSIS install dir")
+          fo.write(f"instdir=todo: NSIS install dir")
+          print(f"-- outputs.version = todo: NSIS version")
+          fo.write(f"version=todo: NSIS version")
