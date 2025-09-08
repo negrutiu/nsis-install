@@ -33,7 +33,7 @@ jobs:
       - name: Install NSIS (non-Windows)
         if: runner.os != 'Windows'
         uses: ./
-        continue-on-error: true # expect failure
+        continue-on-error: true
         with:
           arch: ${{matrix.arch}}
 
@@ -42,8 +42,10 @@ jobs:
         env:
           NSIS_INSTDIR: ${{steps.install.outputs.instdir}}
           NSIS_VERSION: ${{steps.install.outputs.version}}
+          NSIS_ARCH: ${{steps.install.outputs.arch}}
         shell: python
         run: |
           import os
-          print(f'-- NSIS_INSTDIR = {os.getenv("NSIS_INSTDIR")}')
-          print(f'-- NSIS_VERSION = {os.getenv("NSIS_VERSION")}')
+          print(f'| NSIS_INSTDIR = {os.getenv("NSIS_INSTDIR")}')
+          print(f'| NSIS_VERSION = {os.getenv("NSIS_VERSION")}')
+          print(f'| NSIS_ARCH = {os.getenv("NSIS_ARCH")}')

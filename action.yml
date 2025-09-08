@@ -20,11 +20,18 @@ inputs:
       - 'x86_64' # equivalent to amd64
       - 'x64'    # equivalent to amd64
 
+  install-dir:
+    default: ''
+    required: false
+    description: ^
+      NSIS custom installation directory.
+      The default location is `C:\Program Files (x86)\NSIS` for `x86` and `C:\Program Files\NSIS` for `amd64`.
+
   register-path:
     default: true
     required: false
     description: ^
-      Add NSIS directory to PATH environment variable.
+      Add NSIS installation directory to PATH environment variable.
       The default is `true`.
     options:
       - true
@@ -39,6 +46,10 @@ outputs:
     description: The installed version of NSIS (e.g. "1.2.3.4")
     value: ${{steps.install.outputs.version}}
 
+  arch:
+    description: The architecture of NSIS compiler ("x86", "amd64")
+    value: ${{steps.install.outputs.arch}}
+
 branding:
   icon: package   # https://feathericons.com
   color: orange
@@ -52,42 +63,31 @@ runs:
       run: |
         raise RuntimeError("This action only supports Windows runners.")
 
-    - name: Uninstall existing NSIS
-      shell: python
-      run: |
-        import os, sys
-        sys.path.insert(0, r'${{github.workspace}}')
-        from action import *  # import the action.py module
-
-        for instdir in nsis_list(verbose=True):
-            nsis_uninstall(instdir, unregister_path=('${{inputs.register-path}}'.lower() == 'true'))
-
     - name: Install NSIS
       id: install
       shell: python
       run: |
-        import re, os, sys
+        import os, sys
+        sys.path.insert(0, r'${{github.workspace}}')
+        from action import *
 
-        print(f'-- os.name = {os.name}')
-        print(f'-- sys.platform = {sys.platform}')
+        # list existing NSIS installations
+        for instdir in nsis_list():
+          print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
 
-        # architecture
-        arch = None
-        arch_matrix = {'x86': ['x86', 'win32', 'i[3-6]86'], 'amd64': ['amd64', 'x86_64', 'x64']}
-        for name, values in arch_matrix.items():
-            for value in values:
-                if re.match(value, '${{inputs.arch}}', re.IGNORECASE):
-                    arch = name
-        if not arch:
-            raise ValueError(f'unsupported architecture { "${{inputs.arch}}" }')
+        # uninstall existing NSIS installations (optional)
+        # for instdir in nsis_list(verbose=True):
+        #   nsis_uninstall(instdir, unregister_path=(r'${{inputs.register-path}}'.lower() == 'true'))
 
-        # inputs
-        print(f'-- inputs.arch = {arch}')
-        print(f'-- inputs.register-path = { "${{inputs.register-path}}" }')
+        # download and install latest negrutiu/nsis
+        outdir, outver, outarch = nsis_install(arch=r'${{inputs.arch}}', instdir=r'${{inputs.install-dir}}', tempdir=r'${{github.workspace}}', register_path=(r'${{inputs.register-path}}'.lower() == 'true'))
+
+        # list existing NSIS installations
+        for instdir in nsis_list():
+          print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
 
         # outputs
         with open(os.getenv('GITHUB_OUTPUT'), "a") as fo:
-          print(f"-- outputs.instdir = todo: NSIS install dir")
-          fo.write(f"instdir=todo: NSIS install dir\n")
-          print(f"-- outputs.version = todo: NSIS version")
-          fo.write(f"version=todo: NSIS version\n")
+          fo.write(f"instdir={outdir}\n")
+          fo.write(f"version={outver}\n")
+          fo.write(f"arch={outarch}\n")

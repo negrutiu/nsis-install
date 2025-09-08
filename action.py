@@ -1,73 +1,149 @@
-import glob, os, re, subprocess, sys, time, winreg
+import ctypes, json, os, re, subprocess, struct, sys, winreg
+from urllib import request
 
-def nsis_list(verbose=False):
+import ssl
+from pip._vendor import certifi     # use pip certifi to fix (urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1123)>)
+
+if verbose := os.environ.get("RUNNER_DEBUG", default="0") == "1":   # GitHub Actions sets RUNNER_DEBUG=1 when debug logging is enabled
+    print(f'GitHub debug logging enabled (RUNNER_DEBUG=1)')
+    print(f'Python: {sys.version}')
+    print(f'Platform: os.name="{os.name}", sys.platform="{sys.platform}"')
+
+
+def broadcast_settings_change(param=None):
     """
-    List all NSIS installations found in the registry and default locations.
-    Returns:
-      List of unique installation directories.
+    Broadcast `WM_SETTINGCHANGE` message to all windows to notify them of environment changes.
     """
-    installations = []
+    HWND_BROADCAST = 0xFFFF
+    WM_SETTINGCHANGE = 0x001A
+    try:
+        result = ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, param)
+        if verbose: print(f'SendMessage(HWND_BROADCAST, WM_SETTINGCHANGE, {param}) = {result}')
+    except Exception as ex:
+        print(f"-- WM_SETTINGCHANGE broadcast: {ex}")
 
-    uninstall_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS"
-    for registry in [
-        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_64KEY, 'verysilent': True},
-        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_32KEY, 'verysilent': False},
-        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_64KEY, 'verysilent': True},
-        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_32KEY, 'verysilent': True},
-    ]:
-        try:
-            with winreg.OpenKey(registry['hive'], uninstall_key, access= winreg.KEY_READ|registry['view']) as regkey:
-                instdir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
-                winreg.CloseKey(regkey)
-                instdir = os.path.normpath(os.path.expandvars(instdir))
-                if os.path.exists(os.path.join(instdir, 'makensis.exe')):
-                    if instdir not in installations:
-                        installations.append(instdir)
-                elif verbose:
-                    print(f'-- "{instdir}" is invalid')
-        except Exception as ex:
-            if verbose and not registry['verysilent']:
-                print(f'-- "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): {ex}')
 
-    for instdir in [r'%ProgramFiles%\NSIS', r'%ProgramFiles(x86)%\NSIS']:
-        instdir = os.path.normpath(os.path.expandvars(instdir))
-        if os.path.exists(os.path.join(instdir, 'makensis.exe')):
-            if instdir not in installations:
-                installations.append(instdir)
-        elif verbose:
-            print(f'-- "{instdir}" not found')
+def path_add(pathlist, path, keep_existing=True, front=True):
+    """ Add a directory to a `PATH` string. """
+    path = os.path.normpath(path)
 
-    return installations
+    paths = []
+    for entry in pathlist.split(os.pathsep):
+        if os.path.normpath(os.path.expandvars(entry)).casefold() == path.casefold():
+            if keep_existing:
+                return (False, pathlist)   # already exists
+        else:
+            paths.append(entry)
+
+    pathlist = ''   # rebuild PATH
+    for entry in paths:
+        pathlist += (os.pathsep if pathlist != "" else "") + entry
+
+    if front:
+        pathlist = path + (os.pathsep if pathlist != "" else "") + pathlist
+    else:
+        pathlist = pathlist + (os.pathsep if pathlist != "" else "") + path
+
+    return (True, pathlist)
+
+def path_remove(pathlist, path):
+    """ Remove directory (all occurrences) from `PATH` string. """
+    path = os.path.normpath(os.path.expandvars(path))
+
+    modified = False
+    paths = []
+    for entry in pathlist.split(os.pathsep):
+        if os.path.normpath(os.path.expandvars(entry)).casefold() == path.casefold():
+            modified = True
+        else:
+            paths.append(entry)
+
+    if modified:
+        pathlist = ''   # rebuild PATH
+        for entry in paths:
+            pathlist += (os.pathsep if pathlist != "" else "") + entry
+
+    return (modified, pathlist)
+
+def registry_path_add(instdir, regroot, regpath, regvalue="Path", keep_existing=True, front=True):
+    """ Add a directory to a `PATH` string stored in the registry. """
+    modified = False
+    path = None
+    try:
+        with winreg.OpenKey(regroot, regpath, access=winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as hkey:
+            path, regtype = winreg.QueryValueEx(hkey, regvalue)
+        modified, path = path_add(path, instdir, keep_existing, front)
+        if modified:
+            with winreg.OpenKey(regroot, regpath, access=winreg.KEY_WRITE|winreg.KEY_WOW64_64KEY) as hkey:
+                winreg.SetValueEx(hkey, regvalue, 0, winreg.REG_EXPAND_SZ, path)
+                print(f'Added "{instdir}" to {"user" if regroot == winreg.HKEY_CURRENT_USER else "system"} PATH')
+                broadcast_settings_change('Environment')
+    except Exception as ex:
+        modified = False
+        print(f'-- registry_path_add("{instdir}", "{regpath}"): {ex}')
+    return (modified, path)
 
 def registry_path_remove(instdir, regroot, regpath, regvalue="Path"):
-    """
-    Remove all occurrences of a directory from a list of directories (`PATH`) stored in the registry.
-    Returns:
-      True if the registry was modified.
-    """
-    instdir = os.path.normpath(os.path.expandvars(instdir))
-    if instdir == '': return False
+    """ Remove directory (all occurrences) from a `PATH` string stored in the registry. """
+    modified = False
+    path = None
     try:
-        with winreg.OpenKey(regroot, regpath, access=winreg.KEY_READ|winreg.KEY_WRITE|winreg.KEY_WOW64_64KEY) as hkey:
+        with winreg.OpenKey(regroot, regpath, access=winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as hkey:
             path, regtype = winreg.QueryValueEx(hkey, regvalue)
-            paths = []
-            modified = False
-            for entry in path.split(os.pathsep):
-                if os.path.normpath(os.path.expandvars(entry)) == instdir:
-                    print(f'Removed "{entry}" from PATH')
-                    modified = True
-                else:
-                    paths.append(entry)
-            if modified:
-                path = ''   # rebuild PATH
-                for entry in paths:
-                    path += (os.pathsep if path != "" else "") + entry
-                winreg.SetValueEx(hkey, regvalue, 0, regtype, path)
-            winreg.CloseKey(hkey)
-            return modified
+        modified, path = path_remove(path, instdir)
+        if modified:
+            with winreg.OpenKey(regroot, regpath, access=winreg.KEY_WRITE|winreg.KEY_WOW64_64KEY) as hkey:
+                winreg.SetValueEx(hkey, regvalue, 0, winreg.REG_EXPAND_SZ, path)
+                print(f'Removed "{instdir}" from {"user" if regroot == winreg.HKEY_CURRENT_USER else "system"} PATH')
+                broadcast_settings_change('Environment')
     except Exception as ex:
+        modified = False
         print(f'-- registry_path_remove("{instdir}", "{regpath}"): {ex}')
-    return False
+    return (modified, path)
+
+def process_path_add(instdir, keep_existing=True, front=True):
+    """ Add directory to `os.environ['PATH']`. """
+    modified, path = path_add(os.environ.get('PATH', ''), instdir, keep_existing, front)
+    if modified:
+        os.environ['PATH'] = path
+        print(f'Added "{instdir}" to process PATH')
+    return (modified, path)
+
+def process_path_remove(instdir):
+    """ Remove directory (all occurrences) from `os.environ['PATH']`. """
+    modified, path = path_remove(os.environ.get('PATH', ''), instdir)
+    if modified:
+        os.environ['PATH'] = path
+        print(f'Removed "{instdir}" from process PATH')
+    return (modified, path)
+
+
+def pe_architecture(path):
+    """ Return the architecture of a PE file (`x86`, `amd64`, `arm64`). """
+    with open(path, "rb") as fi:
+        # Read DOS header to get e_lfanew (offset to PE header)
+        fi.seek(0x3C)
+        data = fi.read(4)
+        if len(data) != 4:
+            raise ValueError("Not a valid PE file (cannot read e_lfanew).")
+        (e_lfanew,) = struct.unpack("<I", data)
+
+        # Read PE signature + COFF header (at e_lfanew)
+        fi.seek(e_lfanew)
+        sig = fi.read(4)
+        if sig != b"PE\x00\x00":
+            raise ValueError("PE signature not found.")
+
+        coff = fi.read(20)  # IMAGE_FILE_HEADER is 20 bytes
+        if len(coff) != 20:
+            raise ValueError("Truncated COFF header.")
+        (machine,) = struct.unpack("<H", coff[:2])
+
+        # https://learn.microsoft.com/en-us/windows/win32/sysinfo/image-file-machine-constants
+        machines = {0x014c: 'x86', 0x8664: 'amd64', 0xaa64: 'arm64', 0x0200: 'ia64'}
+        return machines.get(machine, None)
+    return None
+
 
 def nsis_version(instdir):
     """ Query NSIS version by executing `makensis.exe /VERSION` in the specified installation directory. Returns `None` on error. """
@@ -77,47 +153,186 @@ def nsis_version(instdir):
         process.wait()
         if cout != None:
             for line in cout.decode('utf-8').split("\r\n"):
-                # print(f"| {line}")
                 if (matches := re.search(r'^v(\d+\.\d+(\.\d+(\.\d+)?)?)', line)) != None:   # look for "v1.2[.3[.4]]"
                     return matches.group(1)
     except Exception as ex:
         print(f'-- get_nsis_version("{instdir}"): {ex}')
     return None
 
+
+def nsis_list():
+    """
+    List all NSIS installations found in the registry and default locations.
+    Returns:
+      List of unique installation directories.
+    """
+    installations = []
+
+    uninstall_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS"
+    for registry in [
+        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_64KEY},
+        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_32KEY},
+        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_64KEY},
+        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_32KEY},
+    ]:
+        try:
+            with winreg.OpenKey(registry['hive'], uninstall_key, access= winreg.KEY_READ|registry['view']) as regkey:
+                if verbose: print(f'>> "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): found')
+                instdir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
+                winreg.CloseKey(regkey)
+                instdir = os.path.normpath(os.path.expandvars(instdir))
+                if os.path.exists(os.path.join(instdir, 'makensis.exe')):
+                    if instdir not in installations:
+                        installations.append(instdir)
+                else:
+                    if verbose: print(f'-- "{instdir}" has an invalid/corrupted NSIS installation')
+        except Exception as ex:
+            if verbose: print(f'-- "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): {ex}')
+
+    for instdir in [r'%ProgramFiles%\NSIS', r'%ProgramFiles(x86)%\NSIS']:
+        instdir = os.path.normpath(os.path.expandvars(instdir))
+        if os.path.exists(os.path.join(instdir, 'makensis.exe')):
+            if verbose: print(f'>> "{instdir}" found')
+            if instdir not in installations:
+                installations.append(instdir)
+        else:
+            if verbose: print(f'-- "{instdir}" not found')
+
+    return installations
+
+
+def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), register_path=True):
+    """ Download and install the latest [negrutiu/nsis](https://github.com/negrutiu/nsis) release.
+        Returns:
+            `(instdir, version, arch)` or raises on error. """
+    # normalize architecture
+    finalarch = None
+    matrix = {'x86': ['x86', 'win32', 'i[3-6]86'], 'amd64': ['amd64', 'x86(_|-)64', 'x64']}
+    for name, values in matrix.items():
+        for value in values:
+            if re.match(rf'^{value}$', arch, re.IGNORECASE):
+                finalarch = name
+    if finalarch:
+        arch = finalarch
+    else:
+        raise ValueError(f'-- unsupported architecture "{arch}"')
+
+    # download
+    installer = None
+    sslctx = ssl.create_default_context(cafile=certifi.where())
+    with request.urlopen('https://api.github.com/repos/negrutiu/nsis/releases/latest', context=sslctx) as http:
+        jsondoc = json.loads(http.read())
+        if verbose:
+            for asset in jsondoc['assets']:
+                print(f'Asset: "{asset["name"]}", {asset["browser_download_url"]}')
+        for asset in jsondoc['assets']:
+            if re.match(rf'nsis-.*-{arch}.exe', asset['name']):
+                installer = os.path.join(tempdir, asset['name'])
+                version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', asset['name']).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
+                if not os.path.exists(installer) or os.stat(installer).st_size != asset['size']:
+                    print(f'Download {asset["browser_download_url"]}')
+                    with request.urlopen(asset['browser_download_url'], context=sslctx) as http:
+                        with open(installer, 'wb') as fo:
+                            fo.write(http.read())
+                else:
+                    print(f'Use existing {installer}')
+                break
+    if installer is None:
+        raise RuntimeError(f'-- no installer found for architecture "{arch}"')
+
+    # install
+    args = [installer, '/S']
+    if instdir is not None and instdir != '':
+        args.append(f'/D={os.path.normpath(os.path.expandvars(instdir))}')
+    exitcode = subprocess.Popen(args).wait()
+    print(f'Run {args} : {exitcode}')
+    if exitcode != 0:
+        raise RuntimeError(f'-- {installer} returned {exitcode}')
+
+    out_instdir = instdir
+    if out_instdir is None or out_instdir == '':
+        out_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS' if arch == 'amd64' else r'%ProgramFiles(x86)%\NSIS'))
+
+    if register_path:
+        process_path_add(out_instdir)
+        registry_path_add(out_instdir, winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", "Path")
+        # registry_path_add(instdir2, winreg.HKEY_CURRENT_USER, r"Environment", "Path")  # HKLM is enough
+    else:
+        if verbose: print(f'PATH entries left intact')
+
+    # verify
+    pe = 'makensis.exe'
+    version2 = nsis_version('')     # makensis.exe in PATH
+    if verbose: print(f'Test version("{pe}") == {version} : {"PASS" if version2 == version else "FAIL"}')
+    if version2 != version:
+        raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{version2}"')
+
+    pe = os.path.join(out_instdir, 'makensis.exe')
+    out_version = nsis_version(out_instdir)
+    if verbose: print(f'Test version("{pe}") == {version} : {"PASS" if out_version == version else "FAIL"}')
+    if out_version != version:
+        raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{out_version}"')
+
+    arch2 = pe_architecture(pe)
+    if verbose: print(f'Test arch("{pe}") == "{arch}" : {"PASS" if arch2 == arch else "FAIL"}')
+    if arch2 != arch:
+        raise RuntimeError(f'-- "{pe}" architecture mismatch, expected {hex(arch)}, got {hex(arch2)}')
+
+    for target in ['x86-unicode', 'amd64-unicode', 'x86-ansi']:
+        for plugin in ['NScurl.dll']:
+            pe = os.path.join(out_instdir, 'Plugins', target, plugin)
+            if verbose: print(f'Test exists("{pe}") : {"PASS" if os.path.exists(pe) else "FAIL"}')
+            if not os.path.exists(pe):
+                raise RuntimeError(f'-- "{pe}" is missing after installation')
+
+    return (out_instdir, out_version, arch)
+
+
 def nsis_uninstall(instdir, unregister_path=True):
     """ Uninstall NSIS found in the specified installation directory. Returns uninstaller exit code or `-1` if NSIS not found. """
     if os.path.exists(os.path.join(instdir, 'Bin', 'makensis.exe')) and os.path.exists(uninst := os.path.join(instdir, 'uninst-nsis.exe')):
-        print(f'Uninstall nsis/{nsis_version(instdir)} from "{instdir}" ...')
         exitcode = os.system(commandline := f'"{uninst}" /S _?={instdir}')
-        print(f'| {commandline} : {exitcode}')
+        print(f'Run {commandline} : {exitcode}')
         if exitcode == 0:
             os.remove(uninst)
             os.rmdir(instdir)
             if unregister_path:
-                registry_path_remove(instdir, winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", "Path")
+                process_path_remove(instdir)
                 registry_path_remove(instdir, winreg.HKEY_CURRENT_USER, r"Environment", "Path")
+                registry_path_remove(instdir, winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", "Path")
+            else:
+                if verbose: print(f'PATH entries left intact')
         return exitcode
     print(f'-- uninstall_nsis("{instdir}") did not find NSIS')
     return -1
 
+
 if __name__ == '__main__':
+
     from argparse import ArgumentParser
     parser = ArgumentParser()
+    parser.add_argument("-a", "--arch", type=str, default='x86', help='NSIS architecture (install only). Supported values: x86, Win32, i386, i486, i586, i686, amd64, x64, x86_64. All values are converted to "x86" or "amd64"')
+    parser.add_argument("-d", "--dir", type=str, help='NSIS custom installation directory (install only)')
+    parser.add_argument("-i", "--install", action='store_true', help='install NSIS')
     parser.add_argument("-u", "--uninstall", action='store_true', help='uninstall all NSIS installations')
+    parser.add_argument("-v", "--verbose", action='store_true', help='more verbose output')
     args = parser.parse_args()
-    
-    print(f'Arguments: {args.__dict__}')
-    
-    print(f'Python: {sys.version}')
-    print(f'Platform: os.name="{os.name}", sys.platform="{sys.platform}"')
 
-    for instdir in nsis_list():
-        print(f'Found nsis/{nsis_version(instdir)} in "{instdir}"')
- 
+    print(f'Arguments: {args.__dict__}')
+
+    if args.verbose:
+        verbose = True
+
+    for instdir in (list := nsis_list()):
+        print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
+    if not list:
+        print('No NSIS installations found')
+
     if args.uninstall:
-        count = 0
-        for instdir in nsis_list(verbose=True):
+        for instdir in (list := nsis_list()):
             nsis_uninstall(instdir)
-            count += 1
-        if count == 0:
+        if not list:
             print('No NSIS installations found to uninstall')
+
+    if args.install:
+        nsis_install(args.arch, args.dir)
