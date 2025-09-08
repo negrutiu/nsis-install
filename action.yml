@@ -55,93 +55,12 @@ runs:
     - name: Uninstall existing NSIS
       shell: python
       run: |
-        import datetime, glob, os, re, subprocess, sys, time, winreg
+        import os, sys
+        sys.path.insert(0, r'${{github.workspace}}')
+        from action import *  # import the action.py module
 
-        def registry_path_remove(mydir, regroot, regpath, regvalue="Path"):
-          """ Remove a directory from a list of directories (PATH like) stored in the registry.
-              Returns True if the registry was modified. """
-          mydir = os.path.normpath(os.path.expandvars(mydir))
-          if mydir == '': return False
-          try:
-            with winreg.OpenKey(regroot, regpath, access=winreg.KEY_READ|winreg.KEY_WRITE|winreg.KEY_WOW64_64KEY) as hkey:
-              path, regtype = winreg.QueryValueEx(hkey, regvalue)
-              pathlist = []
-              dirty = False
-              for entry in path.split(os.pathsep):
-                if os.path.normpath(os.path.expandvars(entry)) == mydir:
-                  print(f'Removed "{entry}" from PATH')
-                  dirty = True
-                else:
-                  pathlist.append(entry)
-              if dirty:
-                path = ''
-                for entry in pathlist:
-                  path += (os.pathsep if path != "" else "") + entry
-                winreg.SetValueEx(hkey, regvalue, 0, winreg.REG_EXPAND_SZ, path)
-              winreg.CloseKey(hkey)
-              return dirty
-          except Exception as ex:
-            print(f'-- registry_path_remove("{mydir}", "{regpath}"): {ex}')
-          return False
-
-        def get_nsis_version(instdir):
-            try:
-                process = subprocess.Popen([os.path.join(instdir, 'makensis.exe'), '/VERSION'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                cout, cerr = process.communicate()
-                process.wait()
-                if cout != None:
-                    for line in cout.decode('utf-8').split("\r\n"):
-                        # print(f"| {line}")
-                        if (matches := re.search(r'^v(\d+\.\d+(\.\d+(\.\d+)?)?)', line)) != None:   # look for "v1.2[.3[.4]]"
-                            return matches.group(1)
-            except Exception as ex:
-                print(f'-- get_nsis_version("{instdir}"): {ex}')
-            return None
-
-        def uninstall_nsis(instdir):
-          if os.path.exists(os.path.join(instdir, 'makensis.exe')) and os.path.exists(uninst := os.path.join(instdir, 'uninst-nsis.exe')):
-            print(f'Found nsis/{get_nsis_version(instdir)} in "{instdir}", uninstalling ...')
-            exitcode = subprocess.Popen([uninst, '/S']).wait()
-            print(f'| "{uninst}" /S : {exitcode}')
-            if exitcode == 0:
-              # the uninstaller returns immediately after it copies itself to TEMP (as Un.exe) and restarts from there
-              # we'll loop until the uninstaller disappears from instdir
-              t0 = datetime.datetime.now()
-              while os.path.exists(uninst) and (datetime.datetime.now() - t0).total_seconds() < 10:
-                time.sleep(1)
-              if os.path.exists(uninst):
-                print(f'-- uninstaller timed out after {(datetime.datetime.now() - t0).total_seconds()} sec')
-                exitcode = 1
-            if exitcode == 0 and '${{inputs.register-path}}'.lower() == 'true':
-              registry_path_remove(instdir, winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", "Path")
-              registry_path_remove(instdir, winreg.HKEY_CURRENT_USER, r"Environment", "Path")
-            return exitcode
-          # print(f'NSIS not found in "{instdir}"')
-          return -1
-
-        # uninstall from registry location, if found
-        try:
-          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS", access= winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as regkey:
-            instdir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
-            winreg.CloseKey(regkey)
-          uninstall_nsis(instdir) 
-        except Exception as ex:
-          # print(f"NSIS registry uninstall key: {ex}, ignoring ...")
-          pass
-
-        # uninstall from the wow64 registry location, if found
-        try:
-          with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS", access= winreg.KEY_READ|winreg.KEY_WOW64_32KEY) as regkey:
-            instdir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
-            winreg.CloseKey(regkey)
-          uninstall_nsis(instdir)
-        except Exception as ex:
-          # print(f"NSIS wow64 registry uninstall key: {ex}, ignoring ...")
-          pass
-
-        # uninstall from default locations, if found
-        uninstall_nsis(f'{os.environ["ProgramFiles"]}\\NSIS')
-        uninstall_nsis(f'{os.environ["ProgramFiles(x86)"]}\\NSIS')
+        for instdir in nsis_list(verbose=True):
+            nsis_uninstall(instdir, unregister_path=('${{inputs.register-path}}'.lower() == 'true'))
 
     - name: Install NSIS
       id: install
