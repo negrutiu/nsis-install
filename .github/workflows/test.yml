@@ -10,11 +10,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
+
+  windows-tests:
+    name: Windows tests
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest]
         arch: [x86, amd64]
 
     runs-on: ${{matrix.os}}
@@ -23,29 +25,247 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Install NSIS
-        id: install
-        if: runner.os == 'Windows'
+      - name: Install NSIS, default directory
+        id: install-default
         uses: ./    # use ./action.yml
         with:
           arch: ${{matrix.arch}}
 
-      - name: Install NSIS (non-Windows)
-        if: runner.os != 'Windows'
+      - name: Validations
+        env:
+          NSIS_INSTDIR: ${{steps.install-default.outputs.instdir}}
+          NSIS_VERSION: ${{steps.install-default.outputs.version}}
+          NSIS_ARCH: ${{steps.install-default.outputs.arch}}
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, r'${{github.workspace}}')
+          from action import *
+
+          instdir = os.getenv("NSIS_INSTDIR"); print(f'NSIS_INSTDIR={instdir}')
+          version = os.getenv("NSIS_VERSION"); print(f'NSIS_VERSION={version}')
+          arch = os.getenv("NSIS_ARCH");       print(f'NSIS_ARCH={arch}')
+          makensis = os.path.join(instdir, 'makensis.exe')
+
+          if r'${{matrix.arch}}' == 'amd64':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS'))
+          elif r'${{matrix.arch}}' == 'x86':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles(x86)%\NSIS'))
+          else:
+            raise RuntimeError(f'-- unknown architecture r"${{matrix.arch}}"')
+
+          print(f'expected instdir="{default_instdir}"')
+          assert instdir.casefold() == default_instdir.casefold(), f'-- instdir mismatch, expected "{default_instdir}", got "{instdir}"'
+          assert os.path.exists(instdir), f'-- {instdir} not found'
+          assert os.path.exists(makensis), f'-- {makensis} not found'
+
+          print(f'nsis_version("{instdir}")={nsis_version(instdir)}')
+          assert nsis_version(instdir) == version, f'-- versions mismatch'
+
+          print(fr'expected arch="${{matrix.arch}}"')
+          assert r'${{matrix.arch}}' == arch, f'-- architectures mismatch, expected "{arch}", got r"${{matrix.arch}}"'
+          print(f'architecture("{makensis}")={pe_architecture(makensis)}')
+          assert pe_architecture(makensis) == arch, f'-- architectures mismatch'
+
+          print(f'nsis_version("")={nsis_version(None)}')
+          assert nsis_version(None) == version, f'-- versions mismatch (PATH)'
+
+
+      - name: Install NSIS, custom directory
+        id: install-custom
         uses: ./
+        with:
+          arch: ${{matrix.arch}}
+          install-dir: 'C:\nsis-${{matrix.arch}}'
+
+      - name: Validations
+        env:
+          NSIS_INSTDIR: ${{steps.install-custom.outputs.instdir}}
+          NSIS_VERSION: ${{steps.install-custom.outputs.version}}
+          NSIS_ARCH: ${{steps.install-custom.outputs.arch}}
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, r'${{github.workspace}}')
+          from action import *
+
+          instdir = os.getenv("NSIS_INSTDIR"); print(f'NSIS_INSTDIR={instdir}')
+          version = os.getenv("NSIS_VERSION"); print(f'NSIS_VERSION={version}')
+          arch = os.getenv("NSIS_ARCH");       print(f'NSIS_ARCH={arch}')
+          makensis = os.path.join(instdir, 'makensis.exe')
+
+          custom_instdir = os.path.normpath(r'C:\\nsis-${{matrix.arch}}')
+
+          if r'${{matrix.arch}}' == 'amd64':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS'))
+          elif r'${{matrix.arch}}' == 'x86':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles(x86)%\NSIS'))
+          else:
+            raise RuntimeError(f'-- unknown architecture r"${{matrix.arch}}"')
+
+          print(f'expected instdir="{custom_instdir}"')
+          assert instdir.casefold() == custom_instdir.casefold(), f'-- instdir mismatch, expected "{custom_instdir}", got "{instdir}"'
+          assert os.path.exists(instdir), f'-- {instdir} not found'
+          assert os.path.exists(makensis), f'-- {makensis} not found'
+
+          print(f'nsis_version("{instdir}")={nsis_version(instdir)}')
+          assert nsis_version(instdir) == version, f'-- versions mismatch'
+
+          print(fr'expected arch="${{matrix.arch}}"')
+          assert r'${{matrix.arch}}' == arch, f'-- architectures mismatch, expected "{arch}", got r"${{matrix.arch}}"'
+          print(f'architecture("{makensis}")={pe_architecture(makensis)}')
+          assert pe_architecture(makensis) == arch, f'-- architectures mismatch'
+
+          print(f'nsis_version("")={nsis_version(None)}')
+          assert nsis_version(None) == version, f'-- versions mismatch (PATH)'
+
+
+      - name: Install NSIS, invalid directory
+        id: install-invalid
+        uses: ./
+        with:
+          arch: ${{matrix.arch}}
+          install-dir: 'H:\invalid\path\that\should\not\exist'
+
+      - name: Validations
+        env:
+          NSIS_INSTDIR: ${{steps.install-invalid.outputs.instdir}}
+          NSIS_VERSION: ${{steps.install-invalid.outputs.version}}
+          NSIS_ARCH: ${{steps.install-invalid.outputs.arch}}
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, r'${{github.workspace}}')
+          from action import *
+
+          instdir = os.getenv("NSIS_INSTDIR"); print(f'NSIS_INSTDIR={instdir}')
+          version = os.getenv("NSIS_VERSION"); print(f'NSIS_VERSION={version}')
+          arch = os.getenv("NSIS_ARCH");       print(f'NSIS_ARCH={arch}')
+          makensis = os.path.join(instdir, 'makensis.exe')
+
+          # when an invalid directory is specified, the installer should fall back to the default location
+          if r'${{matrix.arch}}' == 'amd64':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS'))
+          elif r'${{matrix.arch}}' == 'x86':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles(x86)%\NSIS'))
+          else:
+            raise RuntimeError(f'-- unknown architecture r"${{matrix.arch}}"')
+
+          print(f'expected instdir="{default_instdir}"')
+          assert instdir.casefold() == default_instdir.casefold(), f'-- instdir mismatch, expected "{default_instdir}", got "{instdir}"'
+          assert os.path.exists(instdir), f'-- {instdir} not found'
+          assert os.path.exists(makensis), f'-- {makensis} not found'
+
+          print(f'nsis_version("{instdir}")={nsis_version(instdir)}')
+          assert nsis_version(instdir) == version, f'-- versions mismatch'
+
+          print(fr'expected arch="${{matrix.arch}}"')
+          assert r'${{matrix.arch}}' == arch, f'-- architectures mismatch, expected "{arch}", got r"${{matrix.arch}}"'
+          print(f'architecture("{makensis}")={pe_architecture(makensis)}')
+          assert pe_architecture(makensis) == arch, f'-- architectures mismatch'
+
+          print(f'nsis_version("")={nsis_version(None)}')
+          assert nsis_version(None) == version, f'-- versions mismatch (PATH)'
+
+
+  posix-tests:
+    name: Posix tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{matrix.os}}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+        # nsis-install action should fail on non-Windows OS
+      - name: Install NSIS -- must fail
+        id: install
         continue-on-error: true
+        uses: ./
+
+      - name: Validations
+        shell: python
+        run: |
+          import os, sys
+
+          print(f'os.name={os.name}')
+          print(f'sys.platform={sys.platform}')
+
+          print(f'NSIS_INSTDIR=${{steps.install.outputs.instdir}}')
+          print(f'NSIS_VERSION=${{steps.install.outputs.version}}')
+          print(f'NSIS_ARCH=${{steps.install.outputs.arch}}')
+
+          print(f'steps.install.outcome = ${{steps.install.outcome}}')        # success, failure, cancelled, skipped
+          assert r'${{steps.install.outcome}}' == 'failure', f'-- expected failure, got r"${{steps.install.outcome}}"'
+
+          print(f'steps.install.conclusion = ${{steps.install.conclusion}}')  # success, failure, cancelled, skipped
+          assert r'${{steps.install.conclusion}}' == 'success', f'-- expected success, got r"${{steps.install.conclusion}}"'
+
+
+  nsis-tests:
+    name: NSIS compiler
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-2022, windows-2025]
+        arch: [x86, amd64]
+        charset: [unicode]
+        include:
+        - os: windows-latest
+          arch: x86
+          charset: ansi
+
+    runs-on: ${{matrix.os}}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Uninstall NSIS
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, r'${{github.workspace}}')
+          from action import *
+
+          for instdir in nsis_list():
+            print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
+            exitcode = nsis_uninstall(instdir, unregister_path=True)
+            assert exitcode == 0, f'-- nsis_uninstall("{instdir}") failed with exit code {exitcode}'
+
+      - name: Install NSIS
+        uses: ./
         with:
           arch: ${{matrix.arch}}
 
-      - name: Install outputs
-        if: runner.os == 'Windows'
-        env:
-          NSIS_INSTDIR: ${{steps.install.outputs.instdir}}
-          NSIS_VERSION: ${{steps.install.outputs.version}}
-          NSIS_ARCH: ${{steps.install.outputs.arch}}
+      - name: Compile Test.nsi
+        working-directory: ${{github.workspace}}/.github/workflows
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, r'${{github.workspace}}')
+          from action import *
+
+          exitcode = os.system(r'makensis.exe /V4 /DTARGET=${{matrix.arch}}-${{matrix.charset}} Test.nsi')
+          assert exitcode == 0, f'-- makensis failed with exit code {exitcode}'
+
+          test_installer = os.path.abspath(f'Test-${{matrix.arch}}-${{matrix.charset}}.exe')
+          print(f'exists("{test_installer}") = {os.path.exists(test_installer)}')
+          assert os.path.exists(test_installer), '-- installer not found'
+
+          print(f'architecture("{test_installer}") = "{pe_architecture(test_installer)}"')
+          assert pe_architecture(test_installer) == r'${{matrix.arch}}', '-- installer architecture mismatch'
+
+      - name: Execute test installer
+        working-directory: ${{github.workspace}}/.github/workflows
         shell: python
         run: |
           import os
-          print(f'| NSIS_INSTDIR = {os.getenv("NSIS_INSTDIR")}')
-          print(f'| NSIS_VERSION = {os.getenv("NSIS_VERSION")}')
-          print(f'| NSIS_ARCH = {os.getenv("NSIS_ARCH")}')
+          test_installer = os.path.abspath(f'Test-${{matrix.arch}}-${{matrix.charset}}.exe')
+          exitcode = os.system(f'"{test_installer}" /S')
+          print(f'Run "{test_installer}" /S : {exitcode}')
+          assert exitcode == 0, f'-- installer failed with exit code {exitcode}'

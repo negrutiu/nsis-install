@@ -7,8 +7,8 @@ inputs:
     required: false
     description: ^ 
       NSIS architecture to install.
-      Both `x86` and `amd64` compilers can generate both `x86` and `amd64` installers.
-      The default is `x86` which will overwrite the official NSIS installer that is preinstalled on Windows runners.
+      Both `x86` and `amd64` compilers are able to build both `x86` and `amd64` installers.
+      The default is `x86` which will replace the official NSIS installation that is pre-installed on GitHub Windows runners.
     options:
       - 'x86'
       - 'Win32'  # equivalent to x86
@@ -17,8 +17,9 @@ inputs:
       - 'i586'   # equivalent to x86
       - 'i686'   # equivalent to x86
       - 'amd64'
-      - 'x86_64' # equivalent to amd64
       - 'x64'    # equivalent to amd64
+      - 'x86_64' # equivalent to amd64
+      - 'x86-64' # equivalent to amd64
 
   install-dir:
     default: ''
@@ -26,6 +27,7 @@ inputs:
     description: ^
       NSIS custom installation directory.
       The default location is `C:\Program Files (x86)\NSIS` for `x86` and `C:\Program Files\NSIS` for `amd64`.
+      If the specified directory is invalid, the installer falls back to the default location.
 
   register-path:
     default: true

@@ -4,16 +4,16 @@ from urllib import request
 import ssl
 from pip._vendor import certifi     # use pip certifi to fix (urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1123)>)
 
-if verbose := os.environ.get("RUNNER_DEBUG", default="0") == "1":   # GitHub Actions sets RUNNER_DEBUG=1 when debug logging is enabled
+
+# GitHub Actions sets RUNNER_DEBUG=1 when debug logging is enabled
+if verbose := (os.environ.get("RUNNER_DEBUG", default="0") == "1"):
     print(f'GitHub debug logging enabled (RUNNER_DEBUG=1)')
     print(f'Python: {sys.version}')
     print(f'Platform: os.name="{os.name}", sys.platform="{sys.platform}"')
 
 
 def broadcast_settings_change(param=None):
-    """
-    Broadcast `WM_SETTINGCHANGE` message to all windows to notify them of environment changes.
-    """
+    """ Broadcast `WM_SETTINGCHANGE` to all windows to notify them of environment changes. """
     HWND_BROADCAST = 0xFFFF
     WM_SETTINGCHANGE = 0x001A
     try:
@@ -70,12 +70,13 @@ def registry_path_add(instdir, regroot, regpath, regvalue="Path", keep_existing=
     modified = False
     path = None
     try:
+        regtype = winreg.REG_EXPAND_SZ
         with winreg.OpenKey(regroot, regpath, access=winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as hkey:
             path, regtype = winreg.QueryValueEx(hkey, regvalue)
         modified, path = path_add(path, instdir, keep_existing, front)
         if modified:
             with winreg.OpenKey(regroot, regpath, access=winreg.KEY_WRITE|winreg.KEY_WOW64_64KEY) as hkey:
-                winreg.SetValueEx(hkey, regvalue, 0, winreg.REG_EXPAND_SZ, path)
+                winreg.SetValueEx(hkey, regvalue, 0, regtype, path)
                 print(f'Added "{instdir}" to {"user" if regroot == winreg.HKEY_CURRENT_USER else "system"} PATH')
                 broadcast_settings_change('Environment')
     except Exception as ex:
@@ -88,12 +89,13 @@ def registry_path_remove(instdir, regroot, regpath, regvalue="Path"):
     modified = False
     path = None
     try:
+        regtype = winreg.REG_EXPAND_SZ
         with winreg.OpenKey(regroot, regpath, access=winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as hkey:
             path, regtype = winreg.QueryValueEx(hkey, regvalue)
         modified, path = path_remove(path, instdir)
         if modified:
             with winreg.OpenKey(regroot, regpath, access=winreg.KEY_WRITE|winreg.KEY_WOW64_64KEY) as hkey:
-                winreg.SetValueEx(hkey, regvalue, 0, winreg.REG_EXPAND_SZ, path)
+                winreg.SetValueEx(hkey, regvalue, 0, regtype, path)
                 print(f'Removed "{instdir}" from {"user" if regroot == winreg.HKEY_CURRENT_USER else "system"} PATH')
                 broadcast_settings_change('Environment')
     except Exception as ex:
@@ -116,6 +118,17 @@ def process_path_remove(instdir):
         os.environ['PATH'] = path
         print(f'Removed "{instdir}" from process PATH')
     return (modified, path)
+
+def github_path_add(instdir):
+    if (github_path := os.getenv('GITHUB_PATH')) is not None:
+        try:
+            with open(github_path, 'a') as fo:
+                fo.write(f'{instdir}\n')
+                print(f'Added "{instdir}" to GITHUB_PATH')
+            return True
+        except Exception as ex:
+            print(f'-- github_path_add("{instdir}"): {ex}')
+    return False
 
 
 def pe_architecture(path):
@@ -148,7 +161,7 @@ def pe_architecture(path):
 def nsis_version(instdir):
     """ Query NSIS version by executing `makensis.exe /VERSION` in the specified installation directory. Returns `None` on error. """
     try:
-        process = subprocess.Popen([os.path.join(instdir, 'makensis.exe'), '/VERSION'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen([os.path.join(instdir if instdir is not None else '', 'makensis.exe'), '/VERSION'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         cout, cerr = process.communicate()
         process.wait()
         if cout != None:
@@ -174,7 +187,7 @@ def nsis_list():
         {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_32KEY},
         {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_64KEY},
         {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_32KEY},
-    ]:
+        ]:
         try:
             with winreg.OpenKey(registry['hive'], uninstall_key, access= winreg.KEY_READ|registry['view']) as regkey:
                 if verbose: print(f'>> "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): found')
@@ -241,19 +254,22 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
         raise RuntimeError(f'-- no installer found for architecture "{arch}"')
 
     # install
-    args = [installer, '/S']
+    commandline = f'"{installer}" /S'
     if instdir is not None and instdir != '':
-        args.append(f'/D={os.path.normpath(os.path.expandvars(instdir))}')
-    exitcode = subprocess.Popen(args).wait()
-    print(f'Run {args} : {exitcode}')
+        commandline += f' /D={os.path.normpath(os.path.expandvars(instdir))}'
+    exitcode = os.system(commandline)
+    print(f'Run {commandline} : {exitcode}')
     if exitcode != 0:
         raise RuntimeError(f'-- {installer} returned {exitcode}')
 
     out_instdir = instdir
-    if out_instdir is None or out_instdir == '':
+    if out_instdir is not None and (out_instdir == '' or not os.path.exists(out_instdir)):
+        out_instdir = None
+    if out_instdir is None:
         out_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS' if arch == 'amd64' else r'%ProgramFiles(x86)%\NSIS'))
 
     if register_path:
+        github_path_add(out_instdir)
         process_path_add(out_instdir)
         registry_path_add(out_instdir, winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", "Path")
         # registry_path_add(instdir2, winreg.HKEY_CURRENT_USER, r"Environment", "Path")  # HKLM is enough
@@ -263,25 +279,25 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
     # verify
     pe = 'makensis.exe'
     version2 = nsis_version('')     # makensis.exe in PATH
-    if verbose: print(f'Test version("{pe}") == {version} : {"PASS" if version2 == version else "FAIL"}')
+    if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if version2 == version else "FAIL"}')
     if version2 != version:
         raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{version2}"')
 
     pe = os.path.join(out_instdir, 'makensis.exe')
     out_version = nsis_version(out_instdir)
-    if verbose: print(f'Test version("{pe}") == {version} : {"PASS" if out_version == version else "FAIL"}')
+    if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if out_version == version else "FAIL"}')
     if out_version != version:
         raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{out_version}"')
 
     arch2 = pe_architecture(pe)
-    if verbose: print(f'Test arch("{pe}") == "{arch}" : {"PASS" if arch2 == arch else "FAIL"}')
+    if verbose: print(f'Verify arch("{pe}") == "{arch}" : {"PASS" if arch2 == arch else "FAIL"}')
     if arch2 != arch:
         raise RuntimeError(f'-- "{pe}" architecture mismatch, expected {hex(arch)}, got {hex(arch2)}')
 
     for target in ['x86-unicode', 'amd64-unicode', 'x86-ansi']:
         for plugin in ['NScurl.dll']:
             pe = os.path.join(out_instdir, 'Plugins', target, plugin)
-            if verbose: print(f'Test exists("{pe}") : {"PASS" if os.path.exists(pe) else "FAIL"}')
+            if verbose: print(f'Verify exists("{pe}") : {"PASS" if os.path.exists(pe) else "FAIL"}')
             if not os.path.exists(pe):
                 raise RuntimeError(f'-- "{pe}" is missing after installation')
 
