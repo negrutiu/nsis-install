@@ -70,7 +70,10 @@ runs:
       shell: python
       run: |
         import os, sys
-        sys.path.insert(0, r'${{github.workspace}}')
+        if os.getenv('GITHUB_ACTION_PATH', ''):
+          sys.path.insert(0, os.getenv('GITHUB_ACTION_PATH'))
+        elif os.getenv('GITHUB_WORKSPACE', ''):
+          sys.path.insert(0, os.getenv('GITHUB_WORKSPACE'))
         from action import *
 
         # list existing NSIS installations
