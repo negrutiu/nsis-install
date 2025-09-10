@@ -1,6 +1,6 @@
 # GitHub action `negrutiu/nsis-install`
 
-[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-GitHub%20Actions-blue?logo=github)]()
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-GitHub%20Actions-blue?logo=github)](https://github.com/marketplace/actions/nsis-install)
 
 This GitHub action installs [negrutiu/nsis](https://github.com/negrutiu/nsis), a fork of the [official NSIS](https://nsis.sourceforge.io) (Nullsoft Scriptable Install System) Windows installer system.
 

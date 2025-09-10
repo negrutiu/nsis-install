@@ -1,5 +1,5 @@
-name: Install NSIS
-description: A GitHub Action to install negrutiu/nsis on Windows runners.
+name: Install negrutiu/nsis
+description: Install [negrutiu/nsis](https://github.com/negrutiu/nsis) on Windows runners.
 
 inputs:
   arch:
