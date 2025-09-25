@@ -1,4 +1,4 @@
-import ctypes, json, os, re, subprocess, struct, sys, winreg
+import ctypes, datetime, os, re, shutil, subprocess, struct, sys, winreg
 from urllib import request
 
 import ssl
@@ -131,6 +131,69 @@ def github_path_add(instdir):
     return False
 
 
+def download_github_asset(owner, repo, tag, name_regex, token, outdir):
+    """
+    Download a GitHub release asset matching the specified regex.
+    Returns the path to the downloaded file.
+    """
+    if tag.lower() == 'latest':
+        url = f'https://api.github.com/repos/{owner}/{repo}/releases/latest'
+    else:
+        url = f'https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}'
+
+    asset_url = None
+    asset_size = None
+    asset_path = None
+
+    t0 = datetime.datetime.now()
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    http_request = request.Request(url)
+    http_request.add_header('Accept', 'application/vnd.github.v3+json')
+    if token:
+        http_request.add_header('Authorization', f'Bearer {token}')
+        if verbose: print(f'Info: Found valid GitHub token ({len(token)} chars)')
+    else:
+        print('Warning: No GitHub token provided, may run into API rate limits')
+    with request.urlopen(http_request, context=ssl_context) as http:
+        import json
+        response_json = json.loads(http.read().decode('utf-8'))
+        print(f'GET {url} --> {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+        if verbose:
+            print(f'    Request headers {http_request.header_items()}')
+            print(f'    Response headers {http.getheaders()}')
+            for asset in response_json['assets']:
+                print(f'> asset: "{asset["name"]}", {asset["size"]} bytes, {asset["browser_download_url"]}')
+        for asset in response_json['assets']:
+            if 'name' in asset and re.match(name_regex, asset['name'], re.IGNORECASE):
+                asset_url = asset['browser_download_url']
+                asset_size = asset['size']
+                asset_path = os.path.join(outdir, asset['name'])
+                break
+
+    if asset_url is None:
+        raise ValueError(f'No asset matching "{name_regex}"')
+
+    if os.path.exists(asset_path) and os.path.getsize(asset_path) == asset_size:
+        print(f'Reuse existing "{asset_path}"')
+        return asset_path
+
+    t0 = datetime.datetime.now()
+    http_request = request.Request(asset_url)
+    http_request.add_header('Accept', 'application/octet-stream')
+    if token:
+        http_request.add_header('Authorization', f'Bearer {token}')
+    with request.urlopen(http_request, context=ssl_context) as http:
+        if not os.path.exists(outdir):
+            os.makedirs(outdir, exist_ok=True)
+        with open(asset_path, 'wb') as file:
+            shutil.copyfileobj(http, file)
+            print(f'GET {asset_url} --> {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+            if verbose:
+                print(f'    Request headers: {http_request.header_items()}')
+                print(f'    Response headers: {http.getheaders()}')
+        return asset_path
+
+
 def pe_architecture(path):
     """ Return the architecture of a PE file (`x86`, `amd64`, `arm64`). """
     with open(path, "rb") as fi:
@@ -231,27 +294,10 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
         raise ValueError(f'-- unsupported architecture "{arch}"')
 
     # download
-    installer = None
-    sslctx = ssl.create_default_context(cafile=certifi.where())
-    with request.urlopen('https://api.github.com/repos/negrutiu/nsis/releases/latest', context=sslctx) as http:
-        jsondoc = json.loads(http.read())
-        if verbose:
-            for asset in jsondoc['assets']:
-                print(f'Asset: "{asset["name"]}", {asset["browser_download_url"]}')
-        for asset in jsondoc['assets']:
-            if re.match(rf'nsis-.*-{arch}.exe', asset['name']):
-                installer = os.path.join(tempdir, asset['name'])
-                version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', asset['name']).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
-                if not os.path.exists(installer) or os.stat(installer).st_size != asset['size']:
-                    print(f'Download {asset["browser_download_url"]}')
-                    with request.urlopen(asset['browser_download_url'], context=sslctx) as http:
-                        with open(installer, 'wb') as fo:
-                            fo.write(http.read())
-                else:
-                    print(f'Use existing {installer}')
-                break
-    if installer is None:
-        raise RuntimeError(f'-- no installer found for architecture "{arch}"')
+    github_token = None
+    installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, tempdir)
+    version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
+    assert version, f'-- failed to parse version from "{installer}"'
 
     # install
     commandline = f'"{installer}" /S'
