@@ -1,5 +1,5 @@
-name: Install negrutiu/nsis
-description: Install [negrutiu/nsis](https://github.com/negrutiu/nsis) on Windows runners.
+name: Install NSIS compiler
+description: Install NSIS compiler in GitHub runners
 
 inputs:
   arch:

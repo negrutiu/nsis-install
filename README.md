@@ -1,6 +1,7 @@
 # GitHub action `negrutiu/nsis-install`
 
-[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-GitHub%20Actions-blue?logo=github)](https://github.com/marketplace/actions/install-negrutiu-nsis)
+[![Static Badge](https://img.shields.io/badge/GitHub%20Marketplace-negrutiu%2Fnsis--install-blue?style=flat-square&logo=github)
+](https://github.com/marketplace/actions/install-nsis-compiler)
 
 This GitHub action installs [negrutiu/nsis](https://github.com/negrutiu/nsis), a fork of the [official NSIS](https://nsis.sourceforge.io) (Nullsoft Scriptable Install System) Windows installer system.
 
@@ -111,12 +112,12 @@ jobs:
 
 ## Native `amd64` Installers
 
-Use `Target` directive in your NSIS script to build for different architectures.
+To build for `amd64`, use `Target amd64-unicode` directive in your NSIS script.
 
 ```nsis
 ; NSIS installer
 !define /ifndef ARCH "x86"
-Target "${ARCH}-unicode"  ; possible values: amd64-unicode, x86-unicode, x86-ansi (deprecated)
+Target "${ARCH}-unicode"  ; possible values: amd64-unicode, x86-unicode, x86-ansi
 
 ; Optionally set output file name based on architecture
 OutFile "my_installer_${ARCH}.exe"
@@ -124,7 +125,7 @@ OutFile "my_installer_${ARCH}.exe"
 ; ... rest of script ...
 ```
 
-In your workflow, specify `ARCH` as command line argument when invoking `makensis`.
+In your workflow, use `-D` makensis command line option to define the `ARCH` variable.
 ```yaml
 jobs:
     build:
@@ -136,8 +137,12 @@ jobs:
               uses: negrutiu/nsis-install@v1
 
             - name: Build x86 installer
-              run: makensis /DARCH=x86 my_installer.nsi
+              run: makensis -DARCH=x86 my_installer.nsi
 
             - name: Build amd64 installer
-              run: makensis /DARCH=amd64 my_installer.nsi
+              run: makensis -DARCH=amd64 my_installer.nsi
 ```
+
+# Related topics
+
+- To install or upgrade [NSIS plugins](https://nsis.sourceforge.io/Category:Plugins) on your GitHub runner, check out [negrutiu/nsis-install-plugin](https://github.com/marketplace/actions/install-nsis-plugin) in the Marketplace.
