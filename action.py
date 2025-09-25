@@ -157,7 +157,7 @@ def download_github_asset(owner, repo, tag, name_regex, token, outdir):
     with request.urlopen(http_request, context=ssl_context) as http:
         import json
         response_json = json.loads(http.read().decode('utf-8'))
-        print(f'GET {url} --> {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+        print(f'Download {url} : {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
         if verbose:
             print(f'    Request headers {http_request.header_items()}')
             print(f'    Response headers {http.getheaders()}')
@@ -187,7 +187,7 @@ def download_github_asset(owner, repo, tag, name_regex, token, outdir):
             os.makedirs(outdir, exist_ok=True)
         with open(asset_path, 'wb') as file:
             shutil.copyfileobj(http, file)
-            print(f'GET {asset_url} --> {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+            print(f'Download {asset_url} : {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
             if verbose:
                 print(f'    Request headers: {http_request.header_items()}')
                 print(f'    Response headers: {http.getheaders()}')
@@ -299,11 +299,12 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
     assert version, f'-- failed to parse version from "{installer}"'
 
     # install
+    t0 = datetime.datetime.now()
     commandline = f'"{installer}" /S'
-    if instdir is not None and instdir != '':
+    if instdir:
         commandline += f' /D={os.path.normpath(os.path.expandvars(instdir))}'
     exitcode = os.system(commandline)
-    print(f'Run {commandline} : {exitcode}')
+    print(f'Run {commandline} : {"OK" if exitcode == 0 else str(exitcode)}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
     if exitcode != 0:
         raise RuntimeError(f'-- {installer} returned {exitcode}')
 

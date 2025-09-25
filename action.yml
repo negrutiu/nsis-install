@@ -78,7 +78,8 @@ runs:
 
         # list existing NSIS installations
         for instdir in nsis_list():
-          print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
+          makensis = os.path.join(instdir, "makensis.exe")
+          print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
 
         # uninstall existing NSIS installations (optional)
         # for instdir in nsis_list(verbose=True):
@@ -95,7 +96,8 @@ runs:
 
         # list existing NSIS installations
         for instdir in nsis_list():
-          print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
+          makensis = os.path.join(instdir, "makensis.exe")
+          print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
 
         # outputs
         with open(os.getenv('GITHUB_OUTPUT'), "a") as fo:
