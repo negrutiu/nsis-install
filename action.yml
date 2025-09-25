@@ -85,7 +85,13 @@ runs:
         #   nsis_uninstall(instdir, unregister_path=(r'${{inputs.register-path}}'.lower() == 'true'))
 
         # download and install latest negrutiu/nsis
-        outdir, outver, outarch = nsis_install(arch=r'${{inputs.arch}}', instdir=r'${{inputs.install-dir}}', tempdir=r'${{github.workspace}}', register_path=(r'${{inputs.register-path}}'.lower() == 'true'))
+        outdir, outver, outarch = nsis_install(
+          arch=r'${{inputs.arch}}',
+          instdir=r'${{inputs.install-dir}}',
+          tempdir=r'${{github.workspace}}',
+          register_path=(r'${{inputs.register-path}}'.lower() == 'true'),
+          github_token=r'${{github.token}}'
+          )
 
         # list existing NSIS installations
         for instdir in nsis_list():

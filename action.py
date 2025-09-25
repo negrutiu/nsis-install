@@ -277,7 +277,7 @@ def nsis_list():
     return installations
 
 
-def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), register_path=True):
+def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), register_path=True, github_token=None):
     """ Download and install the latest [negrutiu/nsis](https://github.com/negrutiu/nsis) release.
         Returns:
             `(instdir, version, arch)` or raises on error. """
@@ -294,7 +294,6 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
         raise ValueError(f'-- unsupported architecture "{arch}"')
 
     # download
-    github_token = None
     installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, tempdir)
     version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
     assert version, f'-- failed to parse version from "{installer}"'
