@@ -174,7 +174,7 @@ def download_github_asset(owner, repo, tag, name_regex, token, outdir):
         raise ValueError(f'No asset matching "{name_regex}"')
 
     if os.path.exists(asset_path) and os.path.getsize(asset_path) == asset_size:
-        print(f'Reuse existing "{asset_path}"')
+        print(f'Reuse existing "{asset_path}", {asset_size} bytes')
         return asset_path
 
     t0 = datetime.datetime.now()
@@ -192,6 +192,58 @@ def download_github_asset(owner, repo, tag, name_regex, token, outdir):
                 print(f'    Request headers: {http_request.header_items()}')
                 print(f'    Response headers: {http.getheaders()}')
         return asset_path
+    return None
+
+
+def download_sourceforge_file(project, outdir, platform='windows'):
+    url = f'https://sourceforge.net/projects/{project}/best_release.json'
+    file_url = None
+    file_size = None
+    file_path = None
+
+    t0 = datetime.datetime.now()
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    http_request = request.Request(url)
+    http_request.add_header('Accept', 'application/json')
+    with request.urlopen(http_request, context=ssl_context) as http:
+        import json
+        response_json = json.loads(http.read().decode('utf-8'))
+        # print(response_json)
+        print(f'Download {url} : {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+        if verbose:
+            print(f'    Request headers {http_request.header_items()}')
+            print(f'    Response headers {http.getheaders()}')
+            for release_name in response_json['platform_releases']:
+                release = response_json['platform_releases'][release_name]
+                print(f'> platform: "{release_name}", file: {os.path.basename(release["filename"])}, date: {release["date"]}, bytes: {release["bytes"]}, url: {release["url"]}')
+        file_url = response_json['platform_releases'][platform]['url']
+        file_size = response_json['platform_releases'][platform]['bytes']
+        file_name = os.path.basename(response_json['platform_releases'][platform]['filename'])
+        file_path = os.path.join(outdir, file_name)
+
+    if file_url is None:
+        raise ValueError(f'No file matching platform "{platform}"')
+    if file_url.startswith('http://'):
+        file_url = file_url.replace('http://', 'https://')
+
+    if os.path.exists(file_path) and os.path.getsize(file_path) == file_size:
+        print(f'Reuse existing "{file_path}", {file_size} bytes')
+        return file_path
+
+    t0 = datetime.datetime.now()
+    http_request = request.Request(file_url)
+    http_request.add_header('Accept', 'application/octet-stream')
+    with request.urlopen(http_request, context=ssl_context) as http:
+        if not os.path.exists(outdir):
+            os.makedirs(outdir, exist_ok=True)
+        with open(file_path, 'wb') as file:
+            shutil.copyfileobj(http, file)
+            print(f'Download {file_url} : {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+            if verbose:
+                print(f'    Request headers: {http_request.header_items()}')
+                print(f'    Response headers: {http.getheaders()}')
+        return file_path
+    return None
 
 
 def pe_architecture(path):
