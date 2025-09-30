@@ -5,6 +5,10 @@ import ssl
 from pip._vendor import certifi     # use pip certifi to fix (urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1123)>)
 
 
+scriptdir = os.path.dirname(os.path.abspath(__file__))
+downloadsdir = os.path.join(scriptdir, 'runtime', 'downloads')
+
+
 # GitHub Actions sets RUNNER_DEBUG=1 when debug logging is enabled
 if verbose := (os.environ.get("RUNNER_DEBUG", default="0") == "1"):
     print(f'GitHub debug logging enabled (RUNNER_DEBUG=1)')
@@ -354,7 +358,7 @@ def nsis_list():
     return installations
 
 
-def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), register_path=True, github_token=None):
+def nsis_install(arch, instdir=None, register_path=True, github_token=None):
     """ Download and install the latest [negrutiu/nsis](https://github.com/negrutiu/nsis) release.
         Returns:
             `(instdir, version, arch)` or raises on error. """
@@ -371,7 +375,7 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
         raise ValueError(f'-- unsupported architecture "{arch}"')
 
     # download
-    installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, tempdir)
+    installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, downloadsdir)
     version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
     assert version, f'-- failed to parse version from "{installer}"'
 
