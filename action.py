@@ -292,39 +292,64 @@ def nsis_list():
     """
     List all NSIS installations found in the registry and default locations.
     Returns:
-      List of unique installation directories.
+      list: `[(makensis1, instdir1), ...]`
     """
     installations = []
 
-    uninstall_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS"
-    for registry in [
-        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_64KEY},
-        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_32KEY},
-        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_64KEY},
-        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_32KEY},
-        ]:
-        try:
-            with winreg.OpenKey(registry['hive'], uninstall_key, access= winreg.KEY_READ|registry['view']) as regkey:
-                if verbose: print(f'>> "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): found')
-                instdir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
-                winreg.CloseKey(regkey)
-                instdir = os.path.normpath(os.path.expandvars(instdir))
-                if os.path.exists(os.path.join(instdir, 'makensis.exe')):
-                    if instdir not in installations:
-                        installations.append(instdir)
-                else:
-                    if verbose: print(f'-- "{instdir}" has an invalid/corrupted NSIS installation')
-        except Exception as ex:
-            if verbose: print(f'-- "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): {ex}')
+    candidate_list = []
+    def candidate_add(path):
+        path = os.path.normpath(os.path.expandvars(path))
+        for candidate in candidate_list:
+            if path.casefold() == candidate.casefold():
+                return
+        candidate_list.append(path)
 
-    for instdir in [r'%ProgramFiles%\NSIS', r'%ProgramFiles(x86)%\NSIS']:
-        instdir = os.path.normpath(os.path.expandvars(instdir))
-        if os.path.exists(os.path.join(instdir, 'makensis.exe')):
-            if verbose: print(f'>> "{instdir}" found')
-            if instdir not in installations:
-                installations.append(instdir)
-        else:
-            if verbose: print(f'-- "{instdir}" not found')
+    if os.name == 'nt':
+        import winreg
+        uninstall_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS"
+        for registry in [
+            {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_64KEY},
+            {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_32KEY},
+            {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_64KEY},
+            {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_32KEY},
+            ]:
+            try:
+                with winreg.OpenKey(registry['hive'], uninstall_key, access= winreg.KEY_READ|registry['view']) as regkey:
+                    if verbose: print(f'>> "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): found')
+                    dir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
+                    winreg.CloseKey(regkey)
+                    candidate_add(dir)
+            except Exception as ex:
+                if verbose: print(f'-- "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): {ex}')
+
+    if os.name == 'nt':
+        candidate_add(r'%ProgramFiles%\NSIS')
+        candidate_add(r'%ProgramFiles(x86)%\NSIS')
+
+    for path in os.environ.get('PATH', '').split(os.pathsep):
+        candidate_add(path)
+
+    for dir in candidate_list:
+        makensis = os.path.join(dir, 'makensis.exe' if os.name == 'nt' else 'makensis')
+        if os.path.exists(makensis):
+            makensis = os.path.realpath(makensis)   # resolve symlinks
+            instdir =os.path.dirname(makensis)
+            if instdir == '/usr/bin' or instdir == '/usr/local/bin':
+                assert os.name == 'posix'
+                instdir = '/usr/share/nsis'
+                ensure(os.path.exists(instdir) and os.path.isdir(instdir), f'Invalid NSIS share directory: "{instdir}"')
+            elif os.path.basename(instdir).casefold() == 'bin' and sys.platform == 'darwin':
+                instdir = os.path.dirname(instdir)  # /opt/homebrew/Cellar/makensis/3.11/bin -> /opt/homebrew/Cellar/makensis/3.11/share/nsis
+                instdir += '/share/nsis'
+                ensure(os.path.exists(instdir) and os.path.isdir(instdir), f'Invalid NSIS share directory: "{instdir}"')
+
+            unique = True
+            for makensis0, instdir0 in installations:
+                if makensis0.casefold() == makensis.casefold():
+                    unique = False
+                    break
+            if unique:
+                installations.append((makensis, instdir))
 
     return installations
 
@@ -437,13 +462,13 @@ if __name__ == '__main__':
     if args.verbose:
         verbose = True
 
-    for instdir in (list := nsis_list()):
-        print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
+    for makensis, instdir in (list := nsis_list()):
+        print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
     if not list:
         print('No NSIS installations found')
 
     if args.uninstall:
-        for instdir in (list := nsis_list()):
+        for makensis, instdir in (list := nsis_list()):
             nsis_uninstall(instdir)
         if not list:
             print('No NSIS installations found to uninstall')

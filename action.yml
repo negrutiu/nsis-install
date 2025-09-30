@@ -77,12 +77,11 @@ runs:
         from action import *
 
         # list existing NSIS installations
-        for instdir in nsis_list():
-          makensis = os.path.join(instdir, "makensis.exe")
+        for makensis, instdir in nsis_list():
           print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
 
         # uninstall existing NSIS installations (optional)
-        # for instdir in nsis_list(verbose=True):
+        # for makensis, instdir in nsis_list(verbose=True):
         #   nsis_uninstall(instdir, unregister_path=(r'${{inputs.register-path}}'.lower() == 'true'))
 
         # download and install latest negrutiu/nsis
@@ -95,8 +94,7 @@ runs:
           )
 
         # list existing NSIS installations
-        for instdir in nsis_list():
-          makensis = os.path.join(instdir, "makensis.exe")
+        for makensis, instdir in nsis_list():
           print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
 
         # outputs

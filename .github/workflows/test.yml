@@ -232,8 +232,8 @@ jobs:
           sys.path.insert(0, r'${{github.workspace}}')
           from action import *
 
-          for instdir in nsis_list():
-            print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
+          for makensis, instdir in nsis_list():
+            print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
             exitcode = nsis_uninstall(instdir, unregister_path=True)
             assert exitcode == 0, f'-- nsis_uninstall("{instdir}") failed with exit code {exitcode}'
 
