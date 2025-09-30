@@ -2,11 +2,18 @@ name: Install NSIS compiler
 description: Install NSIS compiler in GitHub runners
 
 inputs:
-  arch:
-    default: x86
+
+  distro:         # available since v2
+    options:
+    - 'negrutiu'  # https://github.com/negrutiu/nsis
+    - 'official'  # https://nsis.sourceforge.io
+    default: negrutiu
     required: false
+
+  arch:
     description: ^ 
       NSIS architecture to install.
+      Applies only when `distro` is set to `negrutiu`, which provides both `x86` and `amd64` compilers.
       Both `x86` and `amd64` compilers are able to build both `x86` and `amd64` installers.
       The default is `x86` which will replace the official NSIS installation that is pre-installed on GitHub Windows runners.
     options:
@@ -20,26 +27,29 @@ inputs:
       - 'x64'    # equivalent to amd64
       - 'x86_64' # equivalent to amd64
       - 'x86-64' # equivalent to amd64
+    default: x86
+    required: false
 
   install-dir:
-    default: ''
-    required: false
     description: ^
       NSIS custom installation directory.
       The default location is `C:\Program Files (x86)\NSIS` for `x86` and `C:\Program Files\NSIS` for `amd64`.
       If the specified directory is invalid, the installer falls back to the default location.
+    default: ''
+    required: false
 
   register-path:
-    default: true
-    required: false
     description: ^
       Add NSIS installation directory to PATH environment variable.
       The default is `true`.
     options:
       - true
       - false
+    default: true
+    required: false
 
 outputs:
+
   instdir:
     description: The installation directory of NSIS
     value: ${{steps.install.outputs.instdir}}
@@ -86,6 +96,7 @@ runs:
 
         # download and install latest negrutiu/nsis
         outdir, outver, outarch = nsis_install(
+          distro=r'${{inputs.distro}}',
           arch=r'${{inputs.arch}}',
           instdir=r'${{inputs.install-dir}}',
           register_path=(r'${{inputs.register-path}}'.lower() == 'true'),

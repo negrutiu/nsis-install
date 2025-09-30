@@ -358,7 +358,7 @@ def nsis_list():
     return installations
 
 
-def nsis_install(arch, instdir=None, register_path=True, github_token=None):
+def nsis_install(arch, distro='negrutiu', instdir=None, register_path=True, github_token=None):
     """ Download and install the latest [negrutiu/nsis](https://github.com/negrutiu/nsis) release.
         Returns:
             `(instdir, version, arch)` or raises on error. """
@@ -374,10 +374,21 @@ def nsis_install(arch, instdir=None, register_path=True, github_token=None):
     else:
         raise ValueError(f'-- unsupported architecture "{arch}"')
 
+    # verify arch
+    if arch != 'x86' and distro.lower() == 'official':
+        raise ValueError(f'-- official NSIS releases only support x86 architecture, got "{arch}"')
+
     # download
-    installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, downloadsdir)
-    version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
-    assert version, f'-- failed to parse version from "{installer}"'
+    if distro.lower() == 'negrutiu':
+        installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, downloadsdir)
+        version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
+        assert version, f'-- failed to parse version from "{installer}"'
+    elif distro.lower() == 'official':
+        installer = download_sourceforge_file('nsis', downloadsdir)
+        version = re.search(r'nsis-(\d+\.\d+(\.\d+(\.\d+)?)?)-setup\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11-setup.exe" => "3.11"
+        assert version, f'-- failed to parse version from "{installer}"'
+    else:
+        raise ValueError(f'-- unsupported distro "{distro}"')
 
     # install
     t0 = datetime.datetime.now()
@@ -395,6 +406,32 @@ def nsis_install(arch, instdir=None, register_path=True, github_token=None):
     if out_instdir is None:
         out_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS' if arch == 'amd64' else r'%ProgramFiles(x86)%\NSIS'))
 
+    # verify
+    pe = os.path.join(out_instdir, 'makensis.exe')
+    out_version = nsis_version(out_instdir)
+    if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if out_version == version else "FAIL"}')
+    if out_version != version:
+        raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{out_version}"')
+
+    arch2 = pe_architecture(pe)
+    if verbose: print(f'Verify arch("{pe}") == "{arch}" : {"PASS" if arch2 == arch else "FAIL"}')
+    if arch2 != arch:
+        raise RuntimeError(f'-- "{pe}" architecture mismatch, expected {hex(arch)}, got {hex(arch2)}')
+
+    if distro.lower() == 'negrutiu':
+        targets = ['x86-unicode', 'x86-ansi', 'amd64-unicode']
+        plugins = ['System.dll', 'Math.dll', 'NScurl.dll']
+    elif distro.lower() == 'official':
+        targets = ['x86-unicode', 'x86-ansi']
+        plugins = ['System.dll', 'Math.dll']
+    for target in targets:
+        for plugin in plugins:
+            pe = os.path.join(out_instdir, 'Plugins', target, plugin)
+            if verbose: print(f'Verify exists("{pe}") : {"PASS" if os.path.exists(pe) else "FAIL"}')
+            if not os.path.exists(pe):
+                raise RuntimeError(f'-- "{pe}" is missing after installation')
+
+    # add instdir to PATH
     if register_path:
         github_path_add(out_instdir)
         process_path_add(out_instdir)
@@ -409,24 +446,6 @@ def nsis_install(arch, instdir=None, register_path=True, github_token=None):
     if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if version2 == version else "FAIL"}')
     if version2 != version:
         raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{version2}"')
-
-    pe = os.path.join(out_instdir, 'makensis.exe')
-    out_version = nsis_version(out_instdir)
-    if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if out_version == version else "FAIL"}')
-    if out_version != version:
-        raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{out_version}"')
-
-    arch2 = pe_architecture(pe)
-    if verbose: print(f'Verify arch("{pe}") == "{arch}" : {"PASS" if arch2 == arch else "FAIL"}')
-    if arch2 != arch:
-        raise RuntimeError(f'-- "{pe}" architecture mismatch, expected {hex(arch)}, got {hex(arch2)}')
-
-    for target in ['x86-unicode', 'amd64-unicode', 'x86-ansi']:
-        for plugin in ['NScurl.dll']:
-            pe = os.path.join(out_instdir, 'Plugins', target, plugin)
-            if verbose: print(f'Verify exists("{pe}") : {"PASS" if os.path.exists(pe) else "FAIL"}')
-            if not os.path.exists(pe):
-                raise RuntimeError(f'-- "{pe}" is missing after installation')
 
     return (out_instdir, out_version, arch)
 
@@ -456,6 +475,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument("-a", "--arch", type=str, default='x86', help='NSIS architecture (install only). Supported values: x86, Win32, i386, i486, i586, i686, amd64, x64, x86_64. All values are converted to "x86" or "amd64"')
     parser.add_argument("-d", "--dir", type=str, help='NSIS custom installation directory (install only)')
+    parser.add_argument("-D", "--distro", type=str, default='negrutiu', help='NSIS fork to install (install only)')
     parser.add_argument("-i", "--install", action='store_true', help='install NSIS')
     parser.add_argument("-u", "--uninstall", action='store_true', help='uninstall all NSIS installations')
     parser.add_argument("-v", "--verbose", action='store_true', help='more verbose output')
@@ -478,4 +498,4 @@ if __name__ == '__main__':
             print('No NSIS installations found to uninstall')
 
     if args.install:
-        nsis_install(args.arch, args.dir)
+        nsis_install(args.arch, args.distro, args.dir)
