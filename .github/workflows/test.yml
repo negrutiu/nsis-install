@@ -294,19 +294,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Uninstall NSIS
-        shell: python
-        run: |
-          import os, sys
-          sys.path.insert(0, r'${{github.workspace}}')
-          from action import *
-
-          for makensis, instdir in nsis_list():
-            print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
-            exitcode = nsis_uninstall(instdir, unregister_path=True)
-            assert exitcode == 0, f'-- nsis_uninstall("{instdir}") failed with exit code {exitcode}'
-
-      - name: Install ${{matrix.distro}}/nsis
+      - name: Install ${{matrix.distro}}-NSIS
         uses: ./
         with:
           distro: ${{matrix.distro}}
@@ -329,6 +317,13 @@ jobs:
 
           print(f'architecture("{test_installer}") = "{pe_architecture(test_installer)}"')
           assert pe_architecture(test_installer) == r'${{matrix.arch}}', '-- installer architecture mismatch'
+
+      - name: Upload test installer
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Test_${{matrix.distro}}_${{matrix.arch}}-${{matrix.charset}}
+          path: ${{github.workspace}}/.github/workflows/Test_${{matrix.distro}}_${{matrix.arch}}-${{matrix.charset}}.exe
 
       - name: Execute test installer
         working-directory: ${{github.workspace}}/.github/workflows
