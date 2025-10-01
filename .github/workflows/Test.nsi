@@ -1,8 +1,9 @@
 !define /ifndef TARGET "x86-unicode"
 Target ${TARGET} ; "x86-unicode", "amd64-unicode"
 
-Name "Test-${TARGET}"
-OutFile "Test-${TARGET}.exe"
+!define /ifndef SUFFIX ""
+Name "Test${SUFFIX}"
+OutFile "Test${SUFFIX}.exe"
 InstallDir "$TEMP"
 ManifestDPIAware true
 RequestExecutionLevel user
