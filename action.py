@@ -5,6 +5,10 @@ import ssl
 from pip._vendor import certifi     # use pip certifi to fix (urllib.error.URLError: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1123)>)
 
 
+scriptdir = os.path.dirname(os.path.abspath(__file__))
+downloadsdir = os.path.join(scriptdir, 'runtime', 'downloads')
+
+
 # GitHub Actions sets RUNNER_DEBUG=1 when debug logging is enabled
 if verbose := (os.environ.get("RUNNER_DEBUG", default="0") == "1"):
     print(f'GitHub debug logging enabled (RUNNER_DEBUG=1)')
@@ -174,7 +178,7 @@ def download_github_asset(owner, repo, tag, name_regex, token, outdir):
         raise ValueError(f'No asset matching "{name_regex}"')
 
     if os.path.exists(asset_path) and os.path.getsize(asset_path) == asset_size:
-        print(f'Reuse existing "{asset_path}"')
+        print(f'Reuse existing "{asset_path}", {asset_size} bytes')
         return asset_path
 
     t0 = datetime.datetime.now()
@@ -192,6 +196,58 @@ def download_github_asset(owner, repo, tag, name_regex, token, outdir):
                 print(f'    Request headers: {http_request.header_items()}')
                 print(f'    Response headers: {http.getheaders()}')
         return asset_path
+    return None
+
+
+def download_sourceforge_file(project, outdir, platform='windows'):
+    url = f'https://sourceforge.net/projects/{project}/best_release.json'
+    file_url = None
+    file_size = None
+    file_path = None
+
+    t0 = datetime.datetime.now()
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    http_request = request.Request(url)
+    http_request.add_header('Accept', 'application/json')
+    with request.urlopen(http_request, context=ssl_context) as http:
+        import json
+        response_json = json.loads(http.read().decode('utf-8'))
+        # print(response_json)
+        print(f'Download {url} : {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+        if verbose:
+            print(f'    Request headers {http_request.header_items()}')
+            print(f'    Response headers {http.getheaders()}')
+            for release_name in response_json['platform_releases']:
+                release = response_json['platform_releases'][release_name]
+                print(f'> platform: "{release_name}", file: {os.path.basename(release["filename"])}, date: {release["date"]}, bytes: {release["bytes"]}, url: {release["url"]}')
+        file_url = response_json['platform_releases'][platform]['url']
+        file_size = response_json['platform_releases'][platform]['bytes']
+        file_name = os.path.basename(response_json['platform_releases'][platform]['filename'])
+        file_path = os.path.join(outdir, file_name)
+
+    if file_url is None:
+        raise ValueError(f'No file matching platform "{platform}"')
+    if file_url.startswith('http://'):
+        file_url = file_url.replace('http://', 'https://')
+
+    if os.path.exists(file_path) and os.path.getsize(file_path) == file_size:
+        print(f'Reuse existing "{file_path}", {file_size} bytes')
+        return file_path
+
+    t0 = datetime.datetime.now()
+    http_request = request.Request(file_url)
+    http_request.add_header('Accept', 'application/octet-stream')
+    with request.urlopen(http_request, context=ssl_context) as http:
+        if not os.path.exists(outdir):
+            os.makedirs(outdir, exist_ok=True)
+        with open(file_path, 'wb') as file:
+            shutil.copyfileobj(http, file)
+            print(f'Download {file_url} : {http.status} {http.reason}, {int((datetime.datetime.now()-t0).total_seconds()*1000)} ms')
+            if verbose:
+                print(f'    Request headers: {http_request.header_items()}')
+                print(f'    Response headers: {http.getheaders()}')
+        return file_path
+    return None
 
 
 def pe_architecture(path):
@@ -240,44 +296,69 @@ def nsis_list():
     """
     List all NSIS installations found in the registry and default locations.
     Returns:
-      List of unique installation directories.
+      list: `[(makensis1, instdir1), ...]`
     """
     installations = []
 
-    uninstall_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS"
-    for registry in [
-        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_64KEY},
-        {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_32KEY},
-        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_64KEY},
-        {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_32KEY},
-        ]:
-        try:
-            with winreg.OpenKey(registry['hive'], uninstall_key, access= winreg.KEY_READ|registry['view']) as regkey:
-                if verbose: print(f'>> "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): found')
-                instdir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
-                winreg.CloseKey(regkey)
-                instdir = os.path.normpath(os.path.expandvars(instdir))
-                if os.path.exists(os.path.join(instdir, 'makensis.exe')):
-                    if instdir not in installations:
-                        installations.append(instdir)
-                else:
-                    if verbose: print(f'-- "{instdir}" has an invalid/corrupted NSIS installation')
-        except Exception as ex:
-            if verbose: print(f'-- "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): {ex}')
+    candidate_list = []
+    def candidate_add(path):
+        path = os.path.normpath(os.path.expandvars(path))
+        for candidate in candidate_list:
+            if path.casefold() == candidate.casefold():
+                return
+        candidate_list.append(path)
 
-    for instdir in [r'%ProgramFiles%\NSIS', r'%ProgramFiles(x86)%\NSIS']:
-        instdir = os.path.normpath(os.path.expandvars(instdir))
-        if os.path.exists(os.path.join(instdir, 'makensis.exe')):
-            if verbose: print(f'>> "{instdir}" found')
-            if instdir not in installations:
-                installations.append(instdir)
-        else:
-            if verbose: print(f'-- "{instdir}" not found')
+    if os.name == 'nt':
+        import winreg
+        uninstall_key = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NSIS"
+        for registry in [
+            {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_64KEY},
+            {'hive': winreg.HKEY_LOCAL_MACHINE, 'hivename': "HKLM", 'view': winreg.KEY_WOW64_32KEY},
+            {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_64KEY},
+            {'hive': winreg.HKEY_CURRENT_USER,  'hivename': "HKCU", 'view': winreg.KEY_WOW64_32KEY},
+            ]:
+            try:
+                with winreg.OpenKey(registry['hive'], uninstall_key, access= winreg.KEY_READ|registry['view']) as regkey:
+                    if verbose: print(f'>> "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): found')
+                    dir, regtype = winreg.QueryValueEx(regkey, "InstallLocation")
+                    winreg.CloseKey(regkey)
+                    candidate_add(dir)
+            except Exception as ex:
+                if verbose: print(f'-- "{registry["hivename"]}\\{uninstall_key}" ({"wow64" if registry["view"] == winreg.KEY_WOW64_32KEY else "nativ"}): {ex}')
+
+    if os.name == 'nt':
+        candidate_add(r'%ProgramFiles%\NSIS')
+        candidate_add(r'%ProgramFiles(x86)%\NSIS')
+
+    for path in os.environ.get('PATH', '').split(os.pathsep):
+        candidate_add(path)
+
+    for dir in candidate_list:
+        makensis = os.path.join(dir, 'makensis.exe' if os.name == 'nt' else 'makensis')
+        if os.path.exists(makensis):
+            makensis = os.path.realpath(makensis)   # resolve symlinks
+            instdir =os.path.dirname(makensis)
+            if instdir == '/usr/bin' or instdir == '/usr/local/bin':
+                assert os.name == 'posix'
+                instdir = '/usr/share/nsis'
+                ensure(os.path.exists(instdir) and os.path.isdir(instdir), f'Invalid NSIS share directory: "{instdir}"')
+            elif os.path.basename(instdir).casefold() == 'bin' and sys.platform == 'darwin':
+                instdir = os.path.dirname(instdir)  # /opt/homebrew/Cellar/makensis/3.11/bin -> /opt/homebrew/Cellar/makensis/3.11/share/nsis
+                instdir += '/share/nsis'
+                ensure(os.path.exists(instdir) and os.path.isdir(instdir), f'Invalid NSIS share directory: "{instdir}"')
+
+            unique = True
+            for makensis0, instdir0 in installations:
+                if makensis0.casefold() == makensis.casefold():
+                    unique = False
+                    break
+            if unique:
+                installations.append((makensis, instdir))
 
     return installations
 
 
-def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), register_path=True, github_token=None):
+def nsis_install(arch, distro='negrutiu', instdir=None, register_path=True, github_token=None):
     """ Download and install the latest [negrutiu/nsis](https://github.com/negrutiu/nsis) release.
         Returns:
             `(instdir, version, arch)` or raises on error. """
@@ -293,10 +374,21 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
     else:
         raise ValueError(f'-- unsupported architecture "{arch}"')
 
+    # verify arch
+    if arch != 'x86' and distro.lower() == 'official':
+        raise ValueError(f'-- official NSIS releases only support x86 architecture, got "{arch}"')
+
     # download
-    installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, tempdir)
-    version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
-    assert version, f'-- failed to parse version from "{installer}"'
+    if distro.lower() == 'negrutiu':
+        installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, downloadsdir)
+        version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
+        assert version, f'-- failed to parse version from "{installer}"'
+    elif distro.lower() == 'official':
+        installer = download_sourceforge_file('nsis', downloadsdir)
+        version = re.search(r'nsis-(\d+\.\d+(\.\d+(\.\d+)?)?)-setup\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11-setup.exe" => "3.11"
+        assert version, f'-- failed to parse version from "{installer}"'
+    else:
+        raise ValueError(f'-- unsupported distro "{distro}"')
 
     # install
     t0 = datetime.datetime.now()
@@ -314,6 +406,32 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
     if out_instdir is None:
         out_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS' if arch == 'amd64' else r'%ProgramFiles(x86)%\NSIS'))
 
+    # verify
+    pe = os.path.join(out_instdir, 'makensis.exe')
+    out_version = nsis_version(out_instdir)
+    if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if out_version == version else "FAIL"}')
+    if out_version != version:
+        raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{out_version}"')
+
+    arch2 = pe_architecture(pe)
+    if verbose: print(f'Verify arch("{pe}") == "{arch}" : {"PASS" if arch2 == arch else "FAIL"}')
+    if arch2 != arch:
+        raise RuntimeError(f'-- "{pe}" architecture mismatch, expected {hex(arch)}, got {hex(arch2)}')
+
+    if distro.lower() == 'negrutiu':
+        targets = ['x86-unicode', 'x86-ansi', 'amd64-unicode']
+        plugins = ['System.dll', 'Math.dll', 'NScurl.dll']
+    elif distro.lower() == 'official':
+        targets = ['x86-unicode', 'x86-ansi']
+        plugins = ['System.dll', 'Math.dll']
+    for target in targets:
+        for plugin in plugins:
+            pe = os.path.join(out_instdir, 'Plugins', target, plugin)
+            if verbose: print(f'Verify exists("{pe}") : {"PASS" if os.path.exists(pe) else "FAIL"}')
+            if not os.path.exists(pe):
+                raise RuntimeError(f'-- "{pe}" is missing after installation')
+
+    # add instdir to PATH
     if register_path:
         github_path_add(out_instdir)
         process_path_add(out_instdir)
@@ -328,24 +446,6 @@ def nsis_install(arch, instdir=None, tempdir=os.path.expandvars('%temp%'), regis
     if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if version2 == version else "FAIL"}')
     if version2 != version:
         raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{version2}"')
-
-    pe = os.path.join(out_instdir, 'makensis.exe')
-    out_version = nsis_version(out_instdir)
-    if verbose: print(f'Verify version("{pe}") == {version} : {"PASS" if out_version == version else "FAIL"}')
-    if out_version != version:
-        raise RuntimeError(f'-- "{pe}" version mismatch, expected "{version}", got "{out_version}"')
-
-    arch2 = pe_architecture(pe)
-    if verbose: print(f'Verify arch("{pe}") == "{arch}" : {"PASS" if arch2 == arch else "FAIL"}')
-    if arch2 != arch:
-        raise RuntimeError(f'-- "{pe}" architecture mismatch, expected {hex(arch)}, got {hex(arch2)}')
-
-    for target in ['x86-unicode', 'amd64-unicode', 'x86-ansi']:
-        for plugin in ['NScurl.dll']:
-            pe = os.path.join(out_instdir, 'Plugins', target, plugin)
-            if verbose: print(f'Verify exists("{pe}") : {"PASS" if os.path.exists(pe) else "FAIL"}')
-            if not os.path.exists(pe):
-                raise RuntimeError(f'-- "{pe}" is missing after installation')
 
     return (out_instdir, out_version, arch)
 
@@ -375,6 +475,7 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument("-a", "--arch", type=str, default='x86', help='NSIS architecture (install only). Supported values: x86, Win32, i386, i486, i586, i686, amd64, x64, x86_64. All values are converted to "x86" or "amd64"')
     parser.add_argument("-d", "--dir", type=str, help='NSIS custom installation directory (install only)')
+    parser.add_argument("-D", "--distro", type=str, default='negrutiu', help='NSIS fork to install (install only)')
     parser.add_argument("-i", "--install", action='store_true', help='install NSIS')
     parser.add_argument("-u", "--uninstall", action='store_true', help='uninstall all NSIS installations')
     parser.add_argument("-v", "--verbose", action='store_true', help='more verbose output')
@@ -385,16 +486,16 @@ if __name__ == '__main__':
     if args.verbose:
         verbose = True
 
-    for instdir in (list := nsis_list()):
-        print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
+    for makensis, instdir in (list := nsis_list()):
+        print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
     if not list:
         print('No NSIS installations found')
 
     if args.uninstall:
-        for instdir in (list := nsis_list()):
+        for makensis, instdir in (list := nsis_list()):
             nsis_uninstall(instdir)
         if not list:
             print('No NSIS installations found to uninstall')
 
     if args.install:
-        nsis_install(args.arch, args.dir)
+        nsis_install(args.arch, args.distro, args.dir)

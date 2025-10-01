@@ -3,16 +3,15 @@
 [![Static Badge](https://img.shields.io/badge/GitHub%20Marketplace-negrutiu%2Fnsis--install-blue?style=flat-square&logo=github)
 ](https://github.com/marketplace/actions/install-nsis-compiler)
 
-This GitHub action installs [negrutiu/nsis](https://github.com/negrutiu/nsis), a fork of the [official NSIS](https://nsis.sourceforge.io) (Nullsoft Scriptable Install System) Windows installer system.
+This GitHub action installs or upgrades the __NSIS compiler__ (Nullsoft Scriptable Install System) on GitHub Windows runners.
 
-Compared to the official NSIS releases, this fork includes a few additions:
-- Builds native `amd64` installers (in addition to `x86`)
-- Adds some useful plugins (e.g. `NScurl`, `TaskbarProgress`, and more)
+You can choose between two NSIS distributions:
+- The [negrutiu-NSIS](https://github.com/negrutiu/nsis) fork (default)
+- The [official NSIS](https://nsis.sourceforge.io) release
 
-The fork comes in two architectures: `x86` and `amd64`. Both of them can build both `x86` and `amd64` installers.  
-The `x86` version will replace the official NSIS installation that is pre-installed on GitHub Windows runners.
+Compared to the official NSIS releases, the negrutiu-NSIS fork can build native `amd64` installers and comes with some useful plugins pre-installed.
 
-The action downloads and installs the [latest build](https://github.com/negrutiu/nsis/releases/latest) from GitHub.
+This GitHub action downloads and installs the latest build of the selected distribution. If NSIS is already installed, it will be upgraded to the latest version.
 
 > [!WARNING]
 > This action only works on Windows runners.
@@ -20,18 +19,23 @@ The action downloads and installs the [latest build](https://github.com/negrutiu
 
 # Action Inputs
 
+### distro
+
+NSIS distribution to install:
+
+- `negrutiu` - Installs the latest build of the [negrutiu-NSIS](https://github.com/negrutiu/nsis) fork
+- `official` - Installs the latest release of the [official NSIS](https://nsis.sourceforge.io)
+
+Default is `negrutiu`
+
 ### `arch`
 
-NSIS compiler architecture to install.  
-Both x86 and amd64 compilers are able to build both x86 and amd64 installers. 
-
-Accepted values:
-- `x86`, `Win32`, `i[2-6]86`
-- `amd64`, `x64`, `x86(-|_)64`
+NSIS compiler architecture to install:
+- `x86`, `Win32`, `i[2-6]86`   - Available in all distros
+- `amd64`, `x64`, `x86(-|_)64` - Only available in the `negrutiu` distro
 
 All values are internally normalized to `x86` or `amd64`  
-
-Default is `x86` which will replace the official NSIS installation that is pre-installed on GitHub Windows runners.
+Default is `x86` which will replace the official NSIS installation that is pre-installed on GitHub Windows runners. If you opt for the `negrutiu` distro, both `x86` and `amd64` compilers can build both `x86` and `amd64` installers.
 
 > [!IMPORTANT]
 > `arm64` is not supported.
@@ -70,44 +74,44 @@ Installed NSIS architecture (`x86` or `amd64`)
 
 ```yaml
 jobs:
-    build:
-        runs-on: windows-latest
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-            - name: Install NSIS
-              uses: negrutiu/nsis-install@v1
+    - name: Install NSIS
+      uses: negrutiu/nsis-install@v2
 
-            - name: Build installer
-              run: makensis my_installer.nsi
+    - name: Build installer
+      run: makensis my_installer.nsi
 ```
 
-## Action Outputs
+## Read Outputs
 
 You can use action outputs to get installation details.  
 First thing, give an `id` to the action step...
 
 ```yaml
 jobs:
-    build:
-        runs-on: windows-latest
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-            - name: Install or upgrade NSIS
-              id: nsis
-              uses: negrutiu/nsis-install@v1
+    - name: Install NSIS
+      id: nsis
+      uses: negrutiu/nsis-install@v2
 
-            - name: Show NSIS info
-              run: |
-                echo "NSIS dir: ${{ steps.nsis.outputs.instdir }}"
-                echo "NSIS version: ${{ steps.nsis.outputs.version }}"
-                echo "NSIS arch: ${{ steps.nsis.outputs.arch }}"
+    - name: Show NSIS info
+      run: |
+        echo "NSIS dir: ${{ steps.nsis.outputs.instdir }}"
+        echo "NSIS version: ${{ steps.nsis.outputs.version }}"
+        echo "NSIS arch: ${{ steps.nsis.outputs.arch }}"
 
-            - name: Build installer
-              run: makensis my_installer.nsi
+    - name: Build installer
+      run: makensis my_installer.nsi
 ```
 
 ## Native `amd64` Installers
@@ -115,32 +119,35 @@ jobs:
 To build for `amd64`, use `Target amd64-unicode` directive in your NSIS script.
 
 ```nsis
-; NSIS installer
+; --------------------
+; my_installer.nsi
+; --------------------
+
 !define /ifndef ARCH "x86"
 Target "${ARCH}-unicode"  ; possible values: amd64-unicode, x86-unicode, x86-ansi
 
-; Optionally set output file name based on architecture
 OutFile "my_installer_${ARCH}.exe"
 
-; ... rest of script ...
+; [...]
 ```
 
-In your workflow, use `-D` makensis command line option to define the `ARCH` variable.
+In your workflow, use `-D` makensis option to define the `ARCH` variable.
 ```yaml
 jobs:
-    build:
-        runs-on: windows-latest
-        steps:
-            - uses: actions/checkout@v4
+  build:
+    runs-on: windows-latest
+    steps:
+    - Name: Checkout code
+      uses: actions/checkout@v4
 
-            - name: Install NSIS
-              uses: negrutiu/nsis-install@v1
+    - name: Install NSIS
+      uses: negrutiu/nsis-install@v2
 
-            - name: Build x86 installer
-              run: makensis -DARCH=x86 my_installer.nsi
+    - name: Build x86 installer
+      run: makensis -DARCH=x86 my_installer.nsi
 
-            - name: Build amd64 installer
-              run: makensis -DARCH=amd64 my_installer.nsi
+    - name: Build amd64 installer
+      run: makensis -DARCH=amd64 my_installer.nsi
 ```
 
 # Related topics

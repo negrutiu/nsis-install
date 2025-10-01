@@ -168,6 +168,55 @@ jobs:
           assert nsis_version(None) == version, f'-- versions mismatch (PATH)'
 
 
+      - name: Install official-NSIS (x86 only)
+        if: matrix.arch == 'x86'
+        id: install-official
+        uses: ./
+        with:
+          arch: ${{matrix.arch}}
+          distro: official
+
+      - name: Validations (x86 only)
+        if: matrix.arch == 'x86'
+        env:
+          NSIS_INSTDIR: ${{steps.install-official.outputs.instdir}}
+          NSIS_VERSION: ${{steps.install-official.outputs.version}}
+          NSIS_ARCH: ${{steps.install-official.outputs.arch}}
+        shell: python
+        run: |
+          import os, sys
+          sys.path.insert(0, r'${{github.workspace}}')
+          from action import *
+
+          instdir = os.getenv("NSIS_INSTDIR"); print(f'NSIS_INSTDIR={instdir}')
+          version = os.getenv("NSIS_VERSION"); print(f'NSIS_VERSION={version}')
+          arch = os.getenv("NSIS_ARCH");       print(f'NSIS_ARCH={arch}')
+          makensis = os.path.join(instdir, 'makensis.exe')
+
+          # installed to default location
+          if r'${{matrix.arch}}' == 'amd64':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS'))
+          elif r'${{matrix.arch}}' == 'x86':
+            default_instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles(x86)%\NSIS'))
+          else:
+            raise RuntimeError(f'-- unknown architecture r"${{matrix.arch}}"')
+
+          print(f'expected instdir="{default_instdir}"')
+          assert instdir.casefold() == default_instdir.casefold(), f'-- instdir mismatch, expected "{default_instdir}", got "{instdir}"'
+          assert os.path.exists(instdir), f'-- {instdir} not found'
+          assert os.path.exists(makensis), f'-- {makensis} not found'
+
+          print(f'nsis_version("{instdir}")={nsis_version(instdir)}')
+          assert nsis_version(instdir) == version, f'-- versions mismatch'
+
+          print(fr'expected arch="${{matrix.arch}}"')
+          assert r'${{matrix.arch}}' == arch, f'-- architectures mismatch, expected "{arch}", got r"${{matrix.arch}}"'
+          print(f'architecture("{makensis}")={pe_architecture(makensis)}')
+          assert pe_architecture(makensis) == arch, f'-- architectures mismatch'
+
+          print(f'nsis_version("")={nsis_version(None)}')
+          assert nsis_version(None) == version, f'-- versions mismatch (PATH)'
+
   posix-tests:
     name: Posix tests
     strategy:
@@ -214,10 +263,30 @@ jobs:
         os: [windows-latest, windows-2022, windows-2025]
         arch: [x86, amd64]
         charset: [unicode]
+        distro: [negrutiu]
         include:
+        # charset: ansi
         - os: windows-latest
           arch: x86
           charset: ansi
+          distro: negrutiu
+        - os: windows-latest
+          arch: x86
+          charset: ansi
+          distro: official
+        # distro: official
+        - os: windows-latest
+          arch: x86
+          charset: unicode
+          distro: official
+        - os: windows-2022
+          arch: x86
+          charset: unicode
+          distro: official
+        - os: windows-2025
+          arch: x86
+          charset: unicode
+          distro: official
 
     runs-on: ${{matrix.os}}
 
@@ -225,21 +294,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
 
-      - name: Uninstall NSIS
-        shell: python
-        run: |
-          import os, sys
-          sys.path.insert(0, r'${{github.workspace}}')
-          from action import *
-
-          for instdir in nsis_list():
-            print(f'Found nsis/{pe_architecture(os.path.join(instdir, "makensis.exe"))}/{nsis_version(instdir)} in "{instdir}"')
-            exitcode = nsis_uninstall(instdir, unregister_path=True)
-            assert exitcode == 0, f'-- nsis_uninstall("{instdir}") failed with exit code {exitcode}'
-
-      - name: Install NSIS
+      - name: Install ${{matrix.distro}}-NSIS
         uses: ./
         with:
+          distro: ${{matrix.distro}}
           arch: ${{matrix.arch}}
 
       - name: Compile Test.nsi
@@ -250,22 +308,29 @@ jobs:
           sys.path.insert(0, r'${{github.workspace}}')
           from action import *
 
-          exitcode = os.system(r'makensis.exe /V4 /DTARGET=${{matrix.arch}}-${{matrix.charset}} Test.nsi')
+          exitcode = os.system(r'makensis.exe -V4 -DTARGET=${{matrix.arch}}-${{matrix.charset}} -DSUFFIX=_${{matrix.distro}}_${{matrix.arch}}-${{matrix.charset}} Test.nsi')
           assert exitcode == 0, f'-- makensis failed with exit code {exitcode}'
 
-          test_installer = os.path.abspath(f'Test-${{matrix.arch}}-${{matrix.charset}}.exe')
+          test_installer = os.path.abspath(f'Test_${{matrix.distro}}_${{matrix.arch}}-${{matrix.charset}}.exe')
           print(f'exists("{test_installer}") = {os.path.exists(test_installer)}')
           assert os.path.exists(test_installer), '-- installer not found'
 
           print(f'architecture("{test_installer}") = "{pe_architecture(test_installer)}"')
           assert pe_architecture(test_installer) == r'${{matrix.arch}}', '-- installer architecture mismatch'
 
+      - name: Upload test installer
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Test_${{matrix.distro}}_${{matrix.arch}}-${{matrix.charset}}
+          path: ${{github.workspace}}/.github/workflows/Test_${{matrix.distro}}_${{matrix.arch}}-${{matrix.charset}}.exe
+
       - name: Execute test installer
         working-directory: ${{github.workspace}}/.github/workflows
         shell: python
         run: |
           import os
-          test_installer = os.path.abspath(f'Test-${{matrix.arch}}-${{matrix.charset}}.exe')
+          test_installer = os.path.abspath(f'Test_${{matrix.distro}}_${{matrix.arch}}-${{matrix.charset}}.exe')
           exitcode = os.system(f'"{test_installer}" /S')
           print(f'Run "{test_installer}" /S : {exitcode}')
           assert exitcode == 0, f'-- installer failed with exit code {exitcode}'
