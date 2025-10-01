@@ -4,6 +4,9 @@ description: Install NSIS compiler in GitHub runners
 inputs:
 
   distro:         # available since v2
+    description: ^
+      NSIS distribution to install.
+      The default is `negrutiu` which provides both `x86` and `amd64` compilers.
     options:
     - 'negrutiu'  # https://github.com/negrutiu/nsis
     - 'official'  # https://nsis.sourceforge.io
