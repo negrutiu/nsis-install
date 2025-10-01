@@ -90,9 +90,17 @@ runs:
         for makensis, instdir in nsis_list():
           print(f'Found nsis/{nsis_version(instdir)}-{pe_architecture(makensis)} in "{instdir}"')
 
-        # uninstall existing NSIS installations (optional)
-        # for makensis, instdir in nsis_list(verbose=True):
-        #   nsis_uninstall(instdir, unregister_path=(r'${{inputs.register-path}}'.lower() == 'true'))
+        # when running in silent mode, NSIS installer doesn't completely uninstall existing installations, instead it only overwrites existing files
+        # it happens that negrutiu-NSIS has more files than official-NSIS, so installing the official distro over negrutiu leaves some files behind
+        # to avoid this we first completely uninstall any existing installation
+        instdir = r'${{inputs.install-dir}}'
+        if not instdir:
+          if r'${{matrix.arch}}' == 'amd64':
+            instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles%\NSIS'))
+          elif r'${{matrix.arch}}' == 'x86':
+            instdir = os.path.normpath(os.path.expandvars(r'%ProgramFiles(x86)%\NSIS'))
+        if instdir and os.path.exists(instdir) and os.path.isdir(instdir) and os.path.exists(os.path.join(instdir, 'uninst-nsis.exe')):
+          nsis_uninstall(instdir, unregister_path=(r'${{inputs.register-path}}'.lower() == 'true'))
 
         # download and install latest negrutiu/nsis
         outdir, outver, outarch = nsis_install(
