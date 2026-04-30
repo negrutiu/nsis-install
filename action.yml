@@ -13,6 +13,14 @@ inputs:
     default: negrutiu
     required: false
 
+  version:        # available since v3
+    description: ^
+      NSIS version to install.
+      If `negrutiu` distro is selected, this should be a GitHub tag pointing to a valid release, e.g. 'v3.12.7487.317'.
+      If `official` distro is selected, this option is invalid and will not have any effect.
+    default: 'latest'
+    required: false
+
   arch:
     description: ^ 
       NSIS architecture to install.
@@ -108,6 +116,7 @@ runs:
         # download and install latest negrutiu/nsis
         outdir, outver, outarch = nsis_install(
           distro=r'${{inputs.distro}}',
+          version_in=r'${{inputs.version}}',
           arch=r'${{inputs.arch}}',
           instdir=r'${{inputs.install-dir}}',
           register_path=(r'${{inputs.register-path}}'.lower() == 'true'),

@@ -28,6 +28,16 @@ NSIS distribution to install:
 
 Default is `negrutiu`
 
+### version
+
+NSIS version to install:
+- A GitHub tag pointing to a valid release, e.g. 'v3.12.7487.317'
+
+Default is `latest`
+
+> [!IMPORTANT]
+> `official` distro is not supported.
+
 ### `arch`
 
 NSIS compiler architecture to install:

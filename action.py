@@ -358,7 +358,7 @@ def nsis_list():
     return installations
 
 
-def nsis_install(arch, distro='negrutiu', instdir=None, register_path=True, github_token=None):
+def nsis_install(arch, distro='negrutiu', version_in='latest', instdir=None, register_path=True, github_token=None):
     """ Download and install the latest [negrutiu/nsis](https://github.com/negrutiu/nsis) release.
         Returns:
             `(instdir, version, arch)` or raises on error. """
@@ -380,7 +380,7 @@ def nsis_install(arch, distro='negrutiu', instdir=None, register_path=True, gith
 
     # download
     if distro.lower() == 'negrutiu':
-        installer = download_github_asset('negrutiu', 'nsis', 'latest', rf'nsis-.*-{arch}\.exe', github_token, downloadsdir)
+        installer = download_github_asset('negrutiu', 'nsis', version_in, rf'nsis-.*-{arch}\.exe', github_token, downloadsdir)
         version = re.search(rf'nsis-(.+)-.*-{arch}\.exe', os.path.basename(installer)).group(1)   # "nsis-3.11.7461.288-negrutiu-x86.exe" => "3.11.7461.288"
         assert version, f'-- failed to parse version from "{installer}"'
     elif distro.lower() == 'official':
